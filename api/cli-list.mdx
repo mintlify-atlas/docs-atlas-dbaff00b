@@ -1,0 +1,229 @@
+---
+title: 'codemogger list'
+description: 'List all indexed files in the database'
+---
+
+## Usage
+
+```bash
+codemogger list [options]
+```
+
+List all files that have been indexed in the database, along with their chunk counts. Useful for verifying what's in your index and understanding the scope of your indexed codebase.
+
+## Options
+
+<ParamField path="--db" type="string">
+  Database file path.
+  
+  **Default:** `<project>/.codemogger/index.db` (automatically determined from current directory)
+  
+  Specify a custom database location if you're not in the indexed project directory or using a non-default database path.
+</ParamField>
+
+<ParamField path="--format" type="string">
+  Output format.
+  
+  **Default:** `text`
+  
+  **Options:**
+  - `text` - Human-readable text output with summary (ideal for terminal use)
+  - `json` - Structured JSON array (ideal for scripting/parsing)
+</ParamField>
+
+## Examples
+
+### Basic usage
+
+List all indexed files in text format:
+
+```bash
+codemogger list
+```
+
+```
+42 files indexed (312 chunks):
+
+  src/index.ts (8 chunks)
+  src/auth/login.ts (12 chunks)
+  src/auth/middleware.ts (6 chunks)
+  src/db/connection.ts (15 chunks)
+  src/db/queries.ts (22 chunks)
+  src/utils/validation.ts (9 chunks)
+  src/utils/errors.ts (7 chunks)
+  src/api/users.ts (18 chunks)
+  src/api/posts.ts (24 chunks)
+  ...
+```
+
+### JSON output
+
+Get structured JSON output for scripting:
+
+```bash
+codemogger list --format json
+```
+
+```json
+[
+  {
+    "filePath": "src/index.ts",
+    "chunkCount": 8
+  },
+  {
+    "filePath": "src/auth/login.ts",
+    "chunkCount": 12
+  },
+  {
+    "filePath": "src/auth/middleware.ts",
+    "chunkCount": 6
+  },
+  {
+    "filePath": "src/db/connection.ts",
+    "chunkCount": 15
+  },
+  {
+    "filePath": "src/db/queries.ts",
+    "chunkCount": 22
+  }
+]
+```
+
+### Empty index
+
+If no files have been indexed yet:
+
+```bash
+codemogger list
+```
+
+```
+No files indexed. Run `codemogger index <dir>` first.
+```
+
+### Custom database location
+
+List files from a database at a custom path:
+
+```bash
+codemogger list --db /custom/path/index.db
+```
+
+```
+127 files indexed (1043 chunks):
+
+  src/main.rs (42 chunks)
+  src/lib.rs (28 chunks)
+  src/parser/mod.rs (35 chunks)
+  ...
+```
+
+### Piping JSON output
+
+Use with `jq` or other tools for advanced filtering:
+
+```bash
+codemogger list --format json | jq 'length'
+```
+
+```
+42
+```
+
+Find files with the most chunks:
+
+```bash
+codemogger list --format json | jq 'sort_by(.chunkCount) | reverse | .[0:5]'
+```
+
+```json
+[
+  {
+    "filePath": "src/db/queries.ts",
+    "chunkCount": 22
+  },
+  {
+    "filePath": "src/api/posts.ts",
+    "chunkCount": 24
+  },
+  {
+    "filePath": "src/api/users.ts",
+    "chunkCount": 18
+  },
+  {
+    "filePath": "src/db/connection.ts",
+    "chunkCount": 15
+  },
+  {
+    "filePath": "src/auth/login.ts",
+    "chunkCount": 12
+  }
+]
+```
+
+Count total chunks:
+
+```bash
+codemogger list --format json | jq '[.[].chunkCount] | add'
+```
+
+```
+312
+```
+
+## Output Format
+
+### Text Format (Default)
+
+- Summary line showing total files and chunks
+- List of files with their chunk counts
+- Indented for readability
+- Helpful message if no files are indexed
+
+### JSON Format
+
+Array of objects with:
+- `filePath`: Relative path to the indexed file
+- `chunkCount`: Number of chunks extracted from this file
+
+## Use Cases
+
+### Verify indexing
+
+After running `codemogger index`, use `list` to verify files were indexed:
+
+```bash
+codemogger index . && codemogger list
+```
+
+### Audit coverage
+
+Check which files are in your index to ensure important files weren't missed:
+
+```bash
+codemogger list | grep -v test
+```
+
+### Monitor index size
+
+Track the size of your index over time:
+
+```bash
+codemogger list --format json | jq '[.[].chunkCount] | add'
+```
+
+### Debugging
+
+When search results seem incomplete, verify the file is indexed:
+
+```bash
+codemogger list | grep "filename.ts"
+```
+
+## Notes
+
+- Files are listed in the order they appear in the database
+- Chunk count indicates how many semantic units were extracted from each file
+- Higher chunk counts typically mean larger or more complex files
+- The list command is fast even for large indexes
+- Use `--format json` when integrating with scripts or tools

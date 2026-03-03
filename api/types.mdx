@@ -1,0 +1,334 @@
+---
+title: Types
+description: Core type definitions exported by Codemogger
+---
+
+## SearchResult
+
+Represents a single search result matching a query.
+
+```typescript
+export interface SearchResult {
+  chunkKey: string;
+  filePath: string;
+  name: string;
+  kind: string;
+  signature: string;
+  snippet: string;
+  startLine: number;
+  endLine: number;
+  score: number;
+}
+```
+
+<ResponseField name="chunkKey" type="string">
+  Unique identifier for the chunk in the format `file_path:startLine:endLine`
+</ResponseField>
+
+<ResponseField name="filePath" type="string">
+  Absolute path to the source file containing this chunk
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Name of the code element (function name, class name, variable name, etc.)
+</ResponseField>
+
+<ResponseField name="kind" type="string">
+  Type of code element: `"function"`, `"class"`, `"struct"`, `"impl"`, `"module"`, `"block"`, etc.
+</ResponseField>
+
+<ResponseField name="signature" type="string">
+  Function signature or first line of the code element
+</ResponseField>
+
+<ResponseField name="snippet" type="string">
+  Full code snippet (only included if `includeSnippet: true` in SearchOptions)
+</ResponseField>
+
+<ResponseField name="startLine" type="number">
+  Starting line number of the chunk (1-indexed)
+</ResponseField>
+
+<ResponseField name="endLine" type="number">
+  Ending line number of the chunk (1-indexed)
+</ResponseField>
+
+<ResponseField name="score" type="number">
+  Relevance score (0.0 to 1.0). Higher scores indicate better matches.
+</ResponseField>
+
+### Example
+
+```typescript
+const results = await index.search('authentication', {
+  includeSnippet: true
+});
+
+for (const result of results) {
+  console.log(`
+    ${result.kind} ${result.name}
+    ${result.filePath}:${result.startLine}-${result.endLine}
+    Score: ${result.score.toFixed(2)}
+    ${result.signature}
+  `);
+}
+```
+
+## IndexedFile
+
+Represents metadata about an indexed file.
+
+```typescript
+export interface IndexedFile {
+  filePath: string;
+  fileHash: string;
+  chunkCount: number;
+  indexedAt: number;
+}
+```
+
+<ResponseField name="filePath" type="string">
+  Absolute path to the indexed file
+</ResponseField>
+
+<ResponseField name="fileHash" type="string">
+  SHA-256 hash of the file contents (used to detect changes)
+</ResponseField>
+
+<ResponseField name="chunkCount" type="number">
+  Number of code chunks extracted from this file
+</ResponseField>
+
+<ResponseField name="indexedAt" type="number">
+  Timestamp (milliseconds since epoch) when the file was last indexed
+</ResponseField>
+
+### Example
+
+```typescript
+const files = await index.listFiles();
+
+for (const file of files) {
+  const date = new Date(file.indexedAt);
+  console.log(`${file.filePath}: ${file.chunkCount} chunks (indexed ${date.toLocaleString()})`);
+}
+```
+
+## Codebase
+
+Represents an indexed codebase (project directory).
+
+```typescript
+export interface Codebase {
+  id: number;
+  rootPath: string;
+  name: string;
+  indexedAt: number;
+  fileCount: number;
+  chunkCount: number;
+}
+```
+
+<ResponseField name="id" type="number">
+  Unique identifier for the codebase in the database
+</ResponseField>
+
+<ResponseField name="rootPath" type="string">
+  Absolute path to the codebase root directory
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Display name for the codebase (defaults to directory name)
+</ResponseField>
+
+<ResponseField name="indexedAt" type="number">
+  Timestamp (milliseconds since epoch) when the codebase was last indexed
+</ResponseField>
+
+<ResponseField name="fileCount" type="number">
+  Total number of files indexed in this codebase
+</ResponseField>
+
+<ResponseField name="chunkCount" type="number">
+  Total number of code chunks extracted from this codebase
+</ResponseField>
+
+### Example
+
+```typescript
+const codebases = await index.listCodebases();
+
+for (const cb of codebases) {
+  console.log(`
+    ${cb.name} (id: ${cb.id})
+    Path: ${cb.rootPath}
+    Files: ${cb.fileCount}
+    Chunks: ${cb.chunkCount}
+    Last indexed: ${new Date(cb.indexedAt).toLocaleString()}
+  `);
+}
+```
+
+## CodeChunk
+
+Represents a parsed code chunk with metadata.
+
+```typescript
+export interface CodeChunk {
+  chunkKey: string;
+  filePath: string;
+  language: string;
+  kind: string;
+  name: string;
+  signature: string;
+  snippet: string;
+  startLine: number;
+  endLine: number;
+  fileHash: string;
+}
+```
+
+<ResponseField name="chunkKey" type="string">
+  Unique identifier in the format `file_path:startLine:endLine`
+</ResponseField>
+
+<ResponseField name="filePath" type="string">
+  Absolute path to the source file
+</ResponseField>
+
+<ResponseField name="language" type="string">
+  Programming language (e.g., `"typescript"`, `"python"`, `"rust"`)
+</ResponseField>
+
+<ResponseField name="kind" type="string">
+  Type of code element: `"function"`, `"class"`, `"struct"`, `"impl"`, `"module"`, `"block"`, etc.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Name of the code element
+</ResponseField>
+
+<ResponseField name="signature" type="string">
+  Function signature or first line of the code element
+</ResponseField>
+
+<ResponseField name="snippet" type="string">
+  Full code snippet
+</ResponseField>
+
+<ResponseField name="startLine" type="number">
+  Starting line number (1-indexed)
+</ResponseField>
+
+<ResponseField name="endLine" type="number">
+  Ending line number (1-indexed)
+</ResponseField>
+
+<ResponseField name="fileHash" type="string">
+  SHA-256 hash of the source file
+</ResponseField>
+
+<Info>
+  This type is primarily used internally during the chunking process. Most SDK users will work with `SearchResult` instead.
+</Info>
+
+## Embedder
+
+A function type for generating embeddings from text.
+
+```typescript
+export type Embedder = (texts: string[]) => Promise<number[][]>;
+```
+
+An embedder function takes an array of text strings and returns a promise that resolves to an array of embedding vectors (one per input text).
+
+### Type Parameters
+
+<ParamField path="texts" type="string[]" required>
+  Array of text strings to embed
+</ParamField>
+
+<ResponseField name="Promise<number[][]>" type="Promise<number[][]>">
+  Promise resolving to an array of embedding vectors. Each vector is an array of numbers representing the semantic embedding of the corresponding input text.
+</ResponseField>
+
+### Example Implementations
+
+#### Using OpenAI Embeddings
+
+```typescript
+import OpenAI from 'openai';
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const embedder: Embedder = async (texts: string[]) => {
+  const response = await openai.embeddings.create({
+    model: 'text-embedding-3-small',
+    input: texts
+  });
+  return response.data.map(d => d.embedding);
+};
+
+const index = new CodeIndex({
+  dbPath: projectDbPath('./my-project'),
+  embedder,
+  embeddingModel: 'text-embedding-3-small'
+});
+```
+
+#### Using Local Model (transformers.js)
+
+```typescript
+import { pipeline } from '@xenova/transformers';
+
+const pipe = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+
+const embedder: Embedder = async (texts: string[]) => {
+  const outputs = await Promise.all(
+    texts.map(async (text) => {
+      const output = await pipe(text, { pooling: 'mean', normalize: true });
+      return Array.from(output.data);
+    })
+  );
+  return outputs;
+};
+
+const index = new CodeIndex({
+  dbPath: projectDbPath('./my-project'),
+  embedder,
+  embeddingModel: 'all-MiniLM-L6-v2'
+});
+```
+
+## SearchMode
+
+String literal type defining available search modes.
+
+```typescript
+export type SearchMode = "semantic" | "keyword" | "hybrid";
+```
+
+<ResponseField name="semantic" type="string">
+  Natural language/conceptual queries using vector similarity search. Best for finding code by description or intent.
+</ResponseField>
+
+<ResponseField name="keyword" type="string">
+  Precise identifier or term lookup using full-text search (FTS). Best for finding specific function names, class names, or exact terms.
+</ResponseField>
+
+<ResponseField name="hybrid" type="string">
+  Combines both semantic and keyword search using reciprocal rank fusion (RRF). Best for queries that may benefit from both approaches.
+</ResponseField>
+
+### Example
+
+```typescript
+const mode: SearchMode = 'hybrid';
+
+const results = await index.search('user authentication', {
+  mode,
+  limit: 10
+});
+```

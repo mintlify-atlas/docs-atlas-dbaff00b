@@ -1,0 +1,421 @@
+---
+title: 'SDK Usage'
+description: 'Use Codemogger as a library in your TypeScript/JavaScript projects'
+icon: 'code'
+---
+
+## Overview
+
+Codemogger can be used as a library in your own applications. The SDK has **no model dependency** - you provide your own embedding function, giving you full control over which models and providers you use.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install codemogger
+```
+
+```bash bun
+bun add codemogger
+```
+
+```bash pnpm
+pnpm add codemogger
+```
+</CodeGroup>
+
+## Basic Usage
+
+<Steps>
+  <Step title="Import the CodeIndex class">
+    ```typescript
+    import { CodeIndex, projectDbPath } from "codemogger"
+    ```
+  </Step>
+
+  <Step title="Provide an embedding function">
+    The SDK requires you to provide an `Embedder` function that takes an array of strings and returns embeddings.
+
+    ```typescript
+    import { pipeline } from "@huggingface/transformers"
+
+    // Load a local embedding model (runs on CPU, no API keys)
+    const extractor = await pipeline(
+      "feature-extraction",
+      "Xenova/all-MiniLM-L6-v2",
+      { dtype: "q8" }
+    )
+
+    const embedder = async (texts: string[]): Promise<number[][]> => {
+      const output = await extractor(texts, {
+        pooling: "mean",
+        normalize: true
+      })
+      return output.tolist() as number[][]
+    }
+    ```
+  </Step>
+
+  <Step title="Create a CodeIndex instance">
+    ```typescript
+    const db = new CodeIndex({
+      dbPath: "./my-project.db",
+      embedder,
+      embeddingModel: "all-MiniLM-L6-v2"
+    })
+    ```
+
+    <Tip>
+    Use `projectDbPath(dir)` to get the default database path for a project:
+    `<dir>/.codemogger/index.db`
+    </Tip>
+  </Step>
+
+  <Step title="Index a codebase">
+    ```typescript
+    const result = await db.index("/path/to/project", {
+      languages: ["typescript", "python"],  // optional filter
+      verbose: true                          // show detailed progress
+    })
+
+    console.log(`Indexed ${result.files} files → ${result.chunks} chunks`)
+    console.log(`Embedded: ${result.embedded}, Skipped: ${result.skipped} unchanged`)
+    console.log(`Duration: ${result.duration}ms`)
+    ```
+  </Step>
+
+  <Step title="Search the index">
+    ```typescript
+    // Semantic search: natural language queries
+    const semanticResults = await db.search(
+      "authentication middleware",
+      { mode: "semantic", limit: 5 }
+    )
+
+    // Keyword search: precise identifier lookup
+    const keywordResults = await db.search(
+      "BTreeCursor",
+      { mode: "keyword", limit: 10 }
+    )
+
+    // Hybrid: combine both with RRF ranking
+    const hybridResults = await db.search(
+      "http request parsing",
+      { mode: "hybrid", limit: 5 }
+    )
+    ```
+  </Step>
+
+  <Step title="Close the connection">
+    ```typescript
+    await db.close()
+    ```
+  </Step>
+</Steps>
+
+## Complete Example
+
+```typescript
+import { CodeIndex, projectDbPath } from "codemogger"
+import { pipeline } from "@huggingface/transformers"
+
+// Initialize embedding model
+const extractor = await pipeline(
+  "feature-extraction",
+  "Xenova/all-MiniLM-L6-v2",
+  { dtype: "q8" }
+)
+
+const embedder = async (texts: string[]): Promise<number[][]> => {
+  const output = await extractor(texts, {
+    pooling: "mean",
+    normalize: true
+  })
+  return output.tolist() as number[][]
+}
+
+// Create index
+const db = new CodeIndex({
+  dbPath: projectDbPath("./my-project"),
+  embedder,
+  embeddingModel: "all-MiniLM-L6-v2"
+})
+
+try {
+  // Index the codebase
+  const indexResult = await db.index("./my-project", { verbose: true })
+  console.log(`Indexed ${indexResult.files} files in ${indexResult.duration}ms`)
+
+  // Search for authentication code
+  const results = await db.search("user authentication flow", {
+    mode: "semantic",
+    limit: 5,
+    includeSnippet: true,  // include full source code
+    threshold: 0.7         // minimum similarity score
+  })
+
+  // Display results
+  for (const result of results) {
+    console.log(`\n${result.filePath}:${result.startLine}-${result.endLine}`)
+    console.log(`  [${result.kind}] ${result.name}`)
+    console.log(`  Score: ${result.score.toFixed(3)}\n`)
+    if (result.snippet) {
+      console.log(result.snippet)
+    }
+  }
+} finally {
+  await db.close()
+}
+```
+
+## API Reference
+
+### `CodeIndex` Constructor
+
+```typescript
+interface CodeIndexOptions {
+  dbPath: string          // Path to SQLite database file
+  embedder: Embedder      // Function to generate embeddings
+  embeddingModel: string  // Model name stored with embeddings
+}
+
+type Embedder = (texts: string[]) => Promise<number[][]>
+```
+
+### `index()` Method
+
+Index or re-index a directory. Only changed files are re-processed (incremental).
+
+```typescript
+interface IndexOptions {
+  languages?: string[]  // Filter by language (e.g. ["rust", "typescript"])
+  verbose?: boolean     // Show detailed progress
+}
+
+interface IndexResult {
+  files: number      // Files processed
+  chunks: number     // Total chunks created
+  embedded: number   // Chunks embedded
+  skipped: number    // Files skipped (unchanged)
+  removed: number    // Stale files removed
+  errors: string[]   // Any errors encountered
+  duration: number   // Total time in milliseconds
+}
+
+await db.index(dir: string, opts?: IndexOptions): Promise<IndexResult>
+```
+
+### `search()` Method
+
+Search indexed code with semantic, keyword, or hybrid mode.
+
+```typescript
+type SearchMode = "semantic" | "keyword" | "hybrid"
+
+interface SearchOptions {
+  mode?: SearchMode       // Default: "semantic"
+  limit?: number          // Max results (default: 5)
+  threshold?: number      // Min score 0-1 (default: 0)
+  includeSnippet?: boolean // Include source code (default: false)
+}
+
+interface SearchResult {
+  chunkKey: string   // Unique chunk identifier
+  filePath: string   // Absolute file path
+  name: string       // Function/class/type name
+  kind: string       // "function", "class", "struct", etc.
+  signature: string  // Function signature or type definition
+  snippet: string    // Full source code (if includeSnippet=true)
+  startLine: number  // Starting line number
+  endLine: number    // Ending line number
+  score: number      // Relevance score 0-1
+}
+
+await db.search(query: string, opts?: SearchOptions): Promise<SearchResult[]>
+```
+
+<Info>
+**Search modes:**
+- **semantic**: Vector similarity search, best for natural language queries when you don't know exact names
+- **keyword**: Full-text search on identifiers, best for precise lookups like "handleRequest" or "BTreeCursor"
+- **hybrid**: Combines both using Reciprocal Rank Fusion (RRF)
+</Info>
+
+### Other Methods
+
+```typescript
+// List all indexed files
+await db.listFiles(): Promise<IndexedFile[]>
+
+interface IndexedFile {
+  filePath: string
+  fileHash: string
+  chunkCount: number
+  indexedAt: number  // timestamp
+}
+
+// List all indexed codebases
+await db.listCodebases(): Promise<Codebase[]>
+
+interface Codebase {
+  id: number
+  rootPath: string
+  name: string
+  indexedAt: number
+  fileCount: number
+  chunkCount: number
+}
+
+// Close database connection
+await db.close(): Promise<void>
+```
+
+## Helper Functions
+
+### `projectDbPath()`
+
+Compute the default database path for a project:
+
+```typescript
+import { projectDbPath } from "codemogger"
+
+const dbPath = projectDbPath("/path/to/project")
+// Returns: /path/to/project/.codemogger/index.db
+```
+
+Creates the `.codemogger` directory if it doesn't exist.
+
+## Usage Patterns
+
+<Tabs>
+  <Tab title="One-time indexing">
+    Index a project once, then search multiple times:
+
+    ```typescript
+    const db = new CodeIndex({ dbPath, embedder, embeddingModel })
+
+    // Index once
+    await db.index("/path/to/project")
+
+    // Search many times
+    const r1 = await db.search("auth middleware")
+    const r2 = await db.search("database connection pool")
+    const r3 = await db.search("error handling")
+
+    await db.close()
+    ```
+  </Tab>
+
+  <Tab title="Keep-alive instance">
+    Keep the index open for the lifetime of your application:
+
+    ```typescript
+    class CodeSearchService {
+      private db: CodeIndex
+
+      constructor(projectPath: string, embedder: Embedder) {
+        this.db = new CodeIndex({
+          dbPath: projectDbPath(projectPath),
+          embedder,
+          embeddingModel: "all-MiniLM-L6-v2"
+        })
+      }
+
+      async search(query: string) {
+        return this.db.search(query, { mode: "hybrid", limit: 10 })
+      }
+
+      async reindex() {
+        return this.db.index(process.cwd())
+      }
+
+      async shutdown() {
+        await this.db.close()
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Multi-codebase">
+    Search across multiple codebases using one database:
+
+    ```typescript
+    const db = new CodeIndex({
+      dbPath: "./multi-project.db",
+      embedder,
+      embeddingModel: "all-MiniLM-L6-v2"
+    })
+
+    // Index multiple projects into the same DB
+    await db.index("/path/to/project-a")
+    await db.index("/path/to/project-b")
+    await db.index("/path/to/project-c")
+
+    // Search across all of them
+    const results = await db.search("websocket handler")
+    // Results may come from any indexed codebase
+
+    await db.close()
+    ```
+  </Tab>
+</Tabs>
+
+## Error Handling
+
+```typescript
+import { CodeIndex } from "codemogger"
+
+const db = new CodeIndex({ dbPath, embedder, embeddingModel })
+
+try {
+  const result = await db.index("/path/to/project")
+  
+  if (result.errors.length > 0) {
+    console.warn("Some files failed to index:")
+    for (const error of result.errors) {
+      console.warn(`  ${error}`)
+    }
+  }
+  
+  const searchResults = await db.search("query")
+  
+  if (searchResults.length === 0) {
+    console.log("No results found. Try a different query or search mode.")
+  }
+} catch (error) {
+  console.error("Indexing/search failed:", error)
+} finally {
+  await db.close()
+}
+```
+
+## TypeScript Types
+
+All types are exported from the main package:
+
+```typescript
+import type {
+  SearchResult,
+  IndexedFile,
+  Codebase,
+  CodeChunk,
+  Embedder
+} from "codemogger"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Embeddings" icon="brain" href="/guides/custom-embeddings">
+    Use different embedding models or API providers
+  </Card>
+  <Card title="Incremental Indexing" icon="rotate" href="/guides/incremental-indexing">
+    Understand how Codemogger handles file changes
+  </Card>
+  <Card title="CLI Usage" icon="terminal" href="/guides/cli-usage">
+    Use the command-line tool for quick searches
+  </Card>
+  <Card title="MCP Server" icon="server" href="/guides/mcp-server">
+    Integrate with AI coding agents
+  </Card>
+</CardGroup>

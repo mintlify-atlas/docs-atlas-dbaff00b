@@ -1,0 +1,392 @@
+---
+title: Installation
+description: 'Install Codemogger with npm, yarn, pnpm, or bun'
+---
+
+## Choose Your Package Manager
+
+Codemogger can be installed globally for CLI usage or locally as a library dependency.
+
+### Global Installation (CLI)
+
+Install globally to use the `codemogger` command from anywhere:
+
+<CodeGroup>
+
+```bash npm
+npm install -g codemogger
+```
+
+```bash yarn
+yarn global add codemogger
+```
+
+```bash pnpm
+pnpm add -g codemogger
+```
+
+```bash bun
+bun add -g codemogger
+```
+
+</CodeGroup>
+
+Verify installation:
+
+```bash
+codemogger --version
+```
+
+### Local Installation (SDK)
+
+Install as a project dependency to use as a library:
+
+<CodeGroup>
+
+```bash npm
+npm install codemogger
+```
+
+```bash yarn
+yarn add codemogger
+```
+
+```bash pnpm
+pnpm add codemogger
+```
+
+```bash bun
+bun add codemogger
+```
+
+</CodeGroup>
+
+### Using npx (No Installation)
+
+Run Codemogger without installing:
+
+```bash
+npx codemogger index ./my-project
+npx codemogger search "authentication middleware"
+```
+
+<Tip>
+  Use `npx -y codemogger` to skip the installation prompt.
+</Tip>
+
+## System Requirements
+
+<CardGroup cols={2}>
+  <Card title="Runtime" icon="gear">
+    Node.js 18+ or Bun 1.0+
+  </Card>
+  <Card title="Disk Space" icon="hard-drive">
+    ~100MB (includes embedding model)
+  </Card>
+  <Card title="Memory" icon="memory">
+    2GB+ recommended for large codebases
+  </Card>
+  <Card title="Platform" icon="computer">
+    macOS, Linux, Windows (WSL recommended)
+  </Card>
+</CardGroup>
+
+<Note>
+  **First-time usage**: The embedding model (`all-MiniLM-L6-v2`, ~25MB) will be downloaded automatically on first run. This is cached in `~/.cache/huggingface/` for future use.
+</Note>
+
+## Verify Installation
+
+Check that Codemogger is installed correctly:
+
+```bash
+codemogger --help
+```
+
+You should see:
+
+```
+Usage: codemogger [options] [command]
+
+Code indexing library for AI coding agents - semantic search over codebases
+
+Options:
+  -V, --version        output the version number
+  --db <path>          database file path (default: <project>/.codemogger/index.db)
+  -h, --help           display help for command
+
+Commands:
+  index [options] <dir>  Index a directory of source code
+  search [options] <query> Search indexed code semantically
+  list [options]         List all indexed files
+  mcp                    Start the MCP server (for Claude Code, OpenCode, etc.)
+  help [command]         display help for command
+```
+
+## Quick Test
+
+Test Codemogger on a small project:
+
+<Steps>
+  <Step title="Index a directory">
+    ```bash
+    codemogger index ./my-project
+    ```
+
+    Expected output:
+    ```
+    Indexed 42 files → 312 chunks, embedded 312, skipped 0 unchanged, removed 0 stale (2847ms)
+    ```
+  </Step>
+
+  <Step title="Run a search">
+    ```bash
+    codemogger search "authentication" --snippet
+    ```
+
+    You should see JSON output with search results.
+  </Step>
+</Steps>
+
+## TypeScript SDK Setup
+
+For TypeScript/JavaScript projects, import Codemogger as a library:
+
+```typescript
+import { CodeIndex, projectDbPath } from "codemogger"
+import { pipeline } from "@huggingface/transformers"
+
+// Load embedding model (runs locally)
+const extractor = await pipeline(
+  "feature-extraction",
+  "Xenova/all-MiniLM-L6-v2",
+  { dtype: "q8" }
+)
+
+const embedder = async (texts: string[]): Promise<number[][]> => {
+  const output = await extractor(texts, {
+    pooling: "mean",
+    normalize: true
+  })
+  return output.tolist() as number[][]
+}
+
+const db = new CodeIndex({
+  dbPath: projectDbPath("./my-project"),
+  embedder,
+  embeddingModel: "all-MiniLM-L6-v2",
+})
+
+await db.index("./my-project")
+const results = await db.search("authentication middleware")
+await db.close()
+```
+
+<Warning>
+  The SDK has no default embedder - you must provide your own embedding function. This gives you full control over the model and runtime.
+</Warning>
+
+## MCP Server Setup
+
+To use Codemogger with AI coding agents via the Model Context Protocol:
+
+<Steps>
+  <Step title="Install globally or use npx">
+    ```bash
+    npm install -g codemogger
+    ```
+
+    Or use `npx` directly in your MCP config (no installation needed).
+  </Step>
+
+  <Step title="Configure your MCP client">
+    Add to your MCP config file:
+
+    <Tabs>
+      <Tab title="Claude Desktop">
+        Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+        ```json
+        {
+          "mcpServers": {
+            "codemogger": {
+              "command": "npx",
+              "args": ["-y", "codemogger", "mcp"]
+            }
+          }
+        }
+        ```
+      </Tab>
+
+      <Tab title="OpenCode">
+        Edit `~/.config/opencode/mcp.json`:
+
+        ```json
+        {
+          "mcpServers": {
+            "codemogger": {
+              "command": "npx",
+              "args": ["-y", "codemogger", "mcp"]
+            }
+          }
+        }
+        ```
+      </Tab>
+
+      <Tab title="Global Installation">
+        If you installed globally:
+
+        ```json
+        {
+          "mcpServers": {
+            "codemogger": {
+              "command": "codemogger",
+              "args": ["mcp"]
+            }
+          }
+        }
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Restart your MCP client">
+    Restart Claude Desktop, OpenCode, or your AI coding agent to load the Codemogger MCP server.
+  </Step>
+
+  <Step title="Test the MCP tools">
+    Ask your AI agent:
+    - "Index the current project with codemogger"
+    - "Search for authentication middleware in the codebase"
+
+    The agent will use the `codemogger_index` and `codemogger_search` tools.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Command not found: codemogger" icon="triangle-exclamation">
+    If you get `command not found` after global installation:
+
+    1. Check your global bin directory is in PATH:
+       ```bash
+       npm config get prefix
+       ```
+
+    2. Add to your `~/.bashrc` or `~/.zshrc`:
+       ```bash
+       export PATH="$PATH:$(npm config get prefix)/bin"
+       ```
+
+    3. Reload your shell:
+       ```bash
+       source ~/.bashrc  # or source ~/.zshrc
+       ```
+
+    Alternatively, use `npx codemogger` instead.
+  </Accordion>
+
+  <Accordion title="Error downloading embedding model" icon="download">
+    If the embedding model fails to download:
+
+    1. Check your internet connection
+    2. Clear the Hugging Face cache:
+       ```bash
+       rm -rf ~/.cache/huggingface/
+       ```
+    3. Try again:
+       ```bash
+       codemogger index ./my-project
+       ```
+
+    The model is cached after first download (~25MB).
+  </Accordion>
+
+  <Accordion title="TypeScript import errors" icon="code">
+    If you see TypeScript errors when importing:
+
+    1. Ensure you have TypeScript 5+ installed:
+       ```bash
+       npm install -D typescript@^5
+       ```
+
+    2. Check your `tsconfig.json` has:
+       ```json
+       {
+         "compilerOptions": {
+           "module": "ESNext",
+           "moduleResolution": "bundler"
+         }
+       }
+       ```
+  </Accordion>
+
+  <Accordion title="Database locked errors" icon="lock">
+    If you see "database is locked" errors:
+
+    1. Ensure no other Codemogger process is running:
+       ```bash
+       ps aux | grep codemogger
+       ```
+
+    2. Kill any running processes:
+       ```bash
+       pkill -f codemogger
+       ```
+
+    3. If the issue persists, delete the WAL files:
+       ```bash
+       rm .codemogger/*.db-wal .codemogger/*.db-shm
+       ```
+  </Accordion>
+
+  <Accordion title="Out of memory errors" icon="memory">
+    For very large codebases (>50k files):
+
+    1. Increase Node.js memory limit:
+       ```bash
+       NODE_OPTIONS="--max-old-space-size=4096" codemogger index ./large-project
+       ```
+
+    2. Index specific languages only:
+       ```bash
+       codemogger index ./large-project --language rust
+       ```
+
+    3. Consider splitting into multiple databases by subdirectory.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Index your first codebase and run searches
+  </Card>
+  <Card
+    title="CLI Reference"
+    icon="terminal"
+    href="/api/cli-index"
+  >
+    Learn all CLI commands and options
+  </Card>
+  <Card
+    title="SDK Reference"
+    icon="code"
+    href="/api/code-index"
+  >
+    Use Codemogger as a library in your projects
+  </Card>
+  <Card
+    title="MCP Integration"
+    icon="plug"
+    href="/guides/mcp-server"
+  >
+    Set up with AI coding agents
+  </Card>
+</CardGroup>

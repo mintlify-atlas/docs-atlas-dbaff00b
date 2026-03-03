@@ -1,0 +1,533 @@
+---
+title: 'CLI Usage'
+description: 'Use the Codemogger command-line tool for code indexing and search'
+icon: 'terminal'
+---
+
+## Installation
+
+<CodeGroup>
+```bash npm (global)
+npm install -g codemogger
+```
+
+```bash npx (no install)
+npx codemogger --help
+```
+
+```bash bun
+bun add -g codemogger
+```
+</CodeGroup>
+
+<Tip>
+The CLI uses the local `all-MiniLM-L6-v2` embedding model by default. The model (~22MB) downloads automatically on first use and is cached for subsequent runs.
+</Tip>
+
+## Quick Start
+
+<Steps>
+  <Step title="Index a project">
+    ```bash
+    codemogger index ./my-project
+    ```
+    
+    Output:
+    ```
+    Indexed 248 files → 1,453 chunks, embedded 1,453, skipped 0 unchanged, removed 0 stale (12,450ms)
+    ```
+  </Step>
+
+  <Step title="Search the index">
+    ```bash
+    codemogger search "authentication middleware"
+    ```
+    
+    Returns JSON results by default.
+  </Step>
+
+  <Step title="View indexed files">
+    ```bash
+    codemogger list
+    ```
+  </Step>
+</Steps>
+
+## Commands
+
+### `index`
+
+Index a directory of source code. Scans files, parses with tree-sitter, generates embeddings, and stores everything in a SQLite database.
+
+```bash
+codemogger index <directory> [options]
+```
+
+<ParamField path="directory" type="string" required>
+  Path to the directory to index
+</ParamField>
+
+<ParamField path="--language" type="string">
+  Filter by language (e.g., `rust`, `typescript`, `python`)
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Show detailed indexing progress including phase timing
+</ParamField>
+
+<ParamField path="--db" type="string">
+  Custom database path (default: `<directory>/.codemogger/index.db`)
+</ParamField>
+
+#### Examples
+
+<CodeGroup>
+```bash Basic indexing
+codemogger index ./my-project
+```
+
+```bash Filter by language
+codemogger index ./my-project --language typescript
+```
+
+```bash Verbose output
+codemogger index ./my-project --verbose
+```
+
+```bash Custom database location
+codemogger index ./my-project --db /tmp/custom.db
+```
+</CodeGroup>
+
+#### Output
+
+```bash
+Indexed 248 files → 1,453 chunks, embedded 1,453, skipped 0 unchanged, removed 0 stale (12,450ms)
+```
+
+With `--verbose`:
+```bash
+  scan: 234ms, chunk+embed: 11,892ms (1453 chunks), fts: 324ms
+Indexed 248 files → 1,453 chunks, embedded 1,453, skipped 0 unchanged, removed 0 stale (12,450ms)
+```
+
+### `search`
+
+Search indexed code semantically or by keyword.
+
+```bash
+codemogger search <query> [options]
+```
+
+<ParamField path="query" type="string" required>
+  Search query - natural language for semantic mode, identifier/keyword for keyword mode
+</ParamField>
+
+<ParamField path="--mode" type="string" default="semantic">
+  Search mode: `semantic`, `keyword`, or `hybrid`
+</ParamField>
+
+<ParamField path="--limit" type="number" default="5">
+  Maximum number of results to return
+</ParamField>
+
+<ParamField path="--threshold" type="number" default="0">
+  Minimum score (0-1) to include in results
+</ParamField>
+
+<ParamField path="--format" type="string" default="json">
+  Output format: `json` or `text`
+</ParamField>
+
+<ParamField path="--snippet" type="boolean">
+  Include full code snippet in output
+</ParamField>
+
+<ParamField path="--db" type="string">
+  Database path (default: auto-detect from current directory)
+</ParamField>
+
+#### Examples
+
+<CodeGroup>
+```bash Semantic search
+codemogger search "authentication middleware" --mode semantic
+```
+
+```bash Keyword search
+codemogger search "BTreeCursor" --mode keyword
+```
+
+```bash Hybrid search
+codemogger search "http request parsing" --mode hybrid --limit 10
+```
+
+```bash Include code snippets
+codemogger search "error handling" --snippet
+```
+
+```bash Text format output
+codemogger search "database connection" --format text
+```
+
+```bash Filter by score threshold
+codemogger search "auth" --threshold 0.7
+```
+</CodeGroup>
+
+#### Output Formats
+
+<Tabs>
+  <Tab title="JSON (default)">
+    ```json
+    {
+      "query": "authentication middleware",
+      "results": [
+        {
+          "filePath": "/path/to/project/src/auth/middleware.ts",
+          "name": "authenticate",
+          "kind": "function",
+          "signature": "export async function authenticate(req: Request, res: Response)",
+          "startLine": 12,
+          "endLine": 34,
+          "score": 0.892
+        },
+        {
+          "filePath": "/path/to/project/src/auth/jwt.ts",
+          "name": "verifyToken",
+          "kind": "function",
+          "signature": "function verifyToken(token: string): Promise<User>",
+          "startLine": 8,
+          "endLine": 15,
+          "score": 0.856
+        }
+      ],
+      "elapsed": 42
+    }
+    ```
+  </Tab>
+
+  <Tab title="Text">
+    ```
+    Query: authentication middleware
+    Found 2 results in 42ms
+
+    1. /path/to/project/src/auth/middleware.ts:12-34  [0.892]
+       [function] authenticate
+       export async function authenticate(req: Request, res: Response)
+
+    2. /path/to/project/src/auth/jwt.ts:8-15  [0.856]
+       [function] verifyToken
+       function verifyToken(token: string): Promise<User>
+    ```
+  </Tab>
+</Tabs>
+
+### `list`
+
+List all indexed files.
+
+```bash
+codemogger list [options]
+```
+
+<ParamField path="--format" type="string" default="text">
+  Output format: `json` or `text`
+</ParamField>
+
+<ParamField path="--db" type="string">
+  Database path
+</ParamField>
+
+#### Examples
+
+<CodeGroup>
+```bash Text output
+codemogger list
+```
+
+```bash JSON output
+codemogger list --format json
+```
+</CodeGroup>
+
+#### Output
+
+<Tabs>
+  <Tab title="Text">
+    ```
+    248 files indexed (1,453 chunks):
+
+      /path/to/project/src/index.ts (12 chunks)
+      /path/to/project/src/auth/middleware.ts (8 chunks)
+      /path/to/project/src/db/store.ts (45 chunks)
+      ...
+    ```
+  </Tab>
+
+  <Tab title="JSON">
+    ```json
+    [
+      {
+        "filePath": "/path/to/project/src/index.ts",
+        "fileHash": "a3f2...",
+        "chunkCount": 12,
+        "indexedAt": 1709510400000
+      },
+      {
+        "filePath": "/path/to/project/src/auth/middleware.ts",
+        "fileHash": "b8e1...",
+        "chunkCount": 8,
+        "indexedAt": 1709510400000
+      }
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+### `mcp`
+
+Start the MCP (Model Context Protocol) server for AI coding agents.
+
+```bash
+codemogger mcp [options]
+```
+
+<ParamField path="--db" type="string">
+  Database path (default: auto-detect from current directory)
+</ParamField>
+
+<Info>
+See the [MCP Server guide](/guides/mcp-server) for integration with Claude Code, OpenCode, and other AI tools.
+</Info>
+
+## Database Management
+
+### Default Database Path
+
+By default, Codemogger stores the index in `<project>/.codemogger/index.db`:
+
+```bash
+cd /path/to/project
+codemogger index .
+# Creates: /path/to/project/.codemogger/index.db
+```
+
+### Custom Database Path
+
+Use the `--db` flag to specify a custom location:
+
+```bash
+codemogger index ./project --db /tmp/custom.db
+codemogger search "query" --db /tmp/custom.db
+```
+
+### Multiple Codebases
+
+You can index multiple projects into the same database:
+
+```bash
+# Use a shared database
+codemogger index ./project-a --db ~/code-index.db
+codemogger index ./project-b --db ~/code-index.db
+codemogger index ./project-c --db ~/code-index.db
+
+# Search across all projects
+codemogger search "websocket handler" --db ~/code-index.db
+```
+
+## Search Modes Explained
+
+<Tabs>
+  <Tab title="Semantic">
+    **Best for:** Natural language queries when you don't know exact names
+    
+    Uses vector embeddings to find conceptually similar code:
+    
+    ```bash
+    codemogger search "authentication middleware" --mode semantic
+    codemogger search "how does error handling work" --mode semantic
+    codemogger search "database connection pooling" --mode semantic
+    ```
+    
+    Returns results ranked by semantic similarity (cosine distance).
+  </Tab>
+
+  <Tab title="Keyword">
+    **Best for:** Precise identifier lookup
+    
+    Uses full-text search on function names, class names, and type names:
+    
+    ```bash
+    codemogger search "BTreeCursor" --mode keyword
+    codemogger search "handleRequest" --mode keyword
+    codemogger search "UserRepository" --mode keyword
+    ```
+    
+    Much faster than semantic search and returns exact matches.
+  </Tab>
+
+  <Tab title="Hybrid">
+    **Best for:** When you're not sure which mode to use
+    
+    Combines semantic and keyword search using Reciprocal Rank Fusion (RRF):
+    
+    ```bash
+    codemogger search "http request parsing" --mode hybrid
+    codemogger search "user authentication" --mode hybrid
+    ```
+    
+    Balances precision (keyword) with recall (semantic).
+  </Tab>
+</Tabs>
+
+## Supported Languages
+
+Codemogger supports **13 languages** with tree-sitter AST parsing:
+
+- **Rust** - `.rs`
+- **C** - `.c`, `.h`
+- **C++** - `.cpp`, `.hpp`, `.cc`, `.cxx`
+- **Go** - `.go`
+- **Python** - `.py`
+- **Zig** - `.zig`
+- **Java** - `.java`
+- **Scala** - `.scala`
+- **JavaScript** - `.js`, `.mjs`, `.cjs`
+- **TypeScript** - `.ts`, `.mts`, `.cts`
+- **TSX** - `.tsx`
+- **PHP** - `.php`
+- **Ruby** - `.rb`
+
+## Performance Tips
+
+<AccordionGroup>
+  <Accordion title="Incremental indexing is fast">
+    Codemogger only re-indexes changed files (detected by SHA-256 hash):
+    
+    ```bash
+    # First run: indexes all files
+    codemogger index ./project
+    # Indexed 248 files → 1,453 chunks (12,450ms)
+    
+    # Subsequent runs: only changed files
+    codemogger index ./project
+    # Indexed 2 files → 15 chunks, skipped 246 unchanged (1,234ms)
+    ```
+  </Accordion>
+
+  <Accordion title="Keyword search is 25-370x faster than ripgrep">
+    For precise identifier lookups, keyword mode is extremely fast:
+    
+    ```bash
+    # Keyword search on TypeScript codebase (39k files)
+    codemogger search "handleRequest" --mode keyword
+    # Returns in ~4ms vs. ripgrep's ~1,500ms
+    ```
+  </Accordion>
+
+  <Accordion title="Use --snippet sparingly">
+    Including snippets increases output size significantly:
+    
+    ```bash
+    # Fast: metadata only
+    codemogger search "auth" --limit 10
+    
+    # Slower: includes full source code
+    codemogger search "auth" --limit 10 --snippet
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Workflows
+
+### Initial Setup
+
+```bash
+# Navigate to your project
+cd /path/to/project
+
+# Index the codebase
+codemogger index . --verbose
+
+# Verify it worked
+codemogger list
+```
+
+### Daily Development
+
+```bash
+# After making changes, re-index (fast - only changed files)
+codemogger index .
+
+# Search for code you're working on
+codemogger search "user profile endpoint" --format text
+```
+
+### Integration with other tools
+
+<CodeGroup>
+```bash Pipe to jq
+codemogger search "auth" --format json | jq '.results[0].filePath'
+```
+
+```bash Save results to file
+codemogger search "middleware" --snippet > results.json
+```
+
+```bash Use in shell scripts
+#!/bin/bash
+RESULTS=$(codemogger search "$1" --format json)
+echo "$RESULTS" | jq -r '.results[].filePath' | sort -u
+```
+</CodeGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="No results found">
+    1. Verify the codebase is indexed:
+       ```bash
+       codemogger list
+       ```
+    
+    2. Try a different search mode:
+       ```bash
+       codemogger search "query" --mode hybrid
+       ```
+    
+    3. Lower the threshold:
+       ```bash
+       codemogger search "query" --threshold 0
+       ```
+  </Accordion>
+
+  <Accordion title="Database locked error">
+    Another process may be using the database. Close any running `codemogger mcp` servers or other connections.
+  </Accordion>
+
+  <Accordion title="Indexing is slow">
+    Indexing is dominated by embedding time (~97% of total). The first run will be slow, but subsequent runs are fast due to incremental indexing.
+    
+    For very large codebases, consider:
+    - Filtering by language: `--language typescript`
+    - Adding directories to `.gitignore` to skip them
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="MCP Server" icon="server" href="/guides/mcp-server">
+    Integrate with AI coding agents
+  </Card>
+  <Card title="SDK Usage" icon="code" href="/guides/sdk-usage">
+    Use Codemogger as a library
+  </Card>
+  <Card title="Incremental Indexing" icon="rotate" href="/guides/incremental-indexing">
+    Learn how file change detection works
+  </Card>
+  <Card title="Custom Embeddings" icon="brain" href="/guides/custom-embeddings">
+    Use different embedding models
+  </Card>
+</CardGroup>

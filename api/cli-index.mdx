@@ -1,0 +1,149 @@
+---
+title: 'codemogger index'
+description: 'Index a directory of source code for semantic search'
+---
+
+## Usage
+
+```bash
+codemogger index <dir> [options]
+```
+
+Index a directory of source code by parsing files, chunking them into semantic units, and generating embeddings for semantic search.
+
+## Arguments
+
+<ParamField path="dir" type="string" required>
+  Directory path to index. Can be relative or absolute path to the codebase you want to make searchable.
+</ParamField>
+
+## Options
+
+<ParamField path="--db" type="string">
+  Database file path. 
+  
+  **Default:** `<project>/.codemogger/index.db` (automatically determined based on the indexed directory)
+  
+  Override the default database location. Useful for managing multiple indexes or storing the database in a custom location.
+</ParamField>
+
+<ParamField path="--language" type="string">
+  Filter by programming language (e.g., `rust`, `typescript`, `python`).
+  
+  When specified, only files matching the given language will be indexed. Omit to index all supported languages.
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Show detailed indexing progress.
+  
+  **Default:** `false`
+  
+  Enables verbose output showing individual files as they're processed and any warnings or errors encountered during indexing.
+</ParamField>
+
+## Examples
+
+### Basic indexing
+
+Index the current directory:
+
+```bash
+codemogger index .
+```
+
+```
+Indexed 42 files → 312 chunks, embedded 312, skipped 0 unchanged, removed 0 stale (1847ms)
+```
+
+### Index a specific project
+
+Index a project at a specific path:
+
+```bash
+codemogger index ~/projects/my-app
+```
+
+```
+Indexed 127 files → 1043 chunks, embedded 1043, skipped 0 unchanged, removed 0 stale (5234ms)
+```
+
+### Filter by language
+
+Index only TypeScript files:
+
+```bash
+codemogger index . --language typescript
+```
+
+```
+Indexed 28 files → 203 chunks, embedded 203, skipped 0 unchanged, removed 0 stale (1102ms)
+```
+
+Index only Rust files:
+
+```bash
+codemogger index ~/projects/rust-project --language rust
+```
+
+### Verbose output
+
+See detailed progress during indexing:
+
+```bash
+codemogger index . --verbose
+```
+
+```
+warning: Failed to parse src/legacy/old-file.js: Unexpected token
+Indexed 42 files → 312 chunks, embedded 312, skipped 0 unchanged, removed 0 stale (1847ms)
+```
+
+### Custom database location
+
+Store the index database in a custom location:
+
+```bash
+codemogger index . --db /tmp/my-index.db
+```
+
+```
+Indexed 42 files → 312 chunks, embedded 312, skipped 0 unchanged, removed 0 stale (1847ms)
+```
+
+### Re-indexing (incremental updates)
+
+When you run index on an already-indexed directory, Codemogger intelligently:
+- Embeds only new or modified chunks
+- Skips unchanged chunks
+- Removes stale chunks from deleted/modified files
+
+```bash
+codemogger index .
+```
+
+```
+Indexed 42 files → 315 chunks, embedded 8, skipped 304 unchanged, removed 5 stale (423ms)
+```
+
+### Combined options
+
+Index TypeScript files with verbose output and custom database:
+
+```bash
+codemogger index ~/projects/my-app --language typescript --verbose --db /custom/path/index.db
+```
+
+## How it works
+
+1. **Scan:** Walks the directory tree and identifies source code files
+2. **Parse:** Uses Tree-sitter to parse files into ASTs
+3. **Chunk:** Intelligently splits code into semantic units (functions, classes, etc.)
+4. **Embed:** Generates vector embeddings using a local embedding model
+5. **Store:** Saves chunks and embeddings to SQLite database for fast retrieval
+
+## Notes
+
+- Indexing is incremental - unchanged files are skipped on subsequent runs
+- The database is stored in `.codemogger/index.db` within the project by default
+- All embedding happens locally using a fast, lightweight model
+- Larger codebases may take longer to index initially, but re-indexing is fast

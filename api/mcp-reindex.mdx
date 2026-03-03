@@ -1,0 +1,228 @@
+---
+title: "codemogger_reindex"
+description: "Update the code index after modifying source files"
+---
+
+## Overview
+
+The `codemogger_reindex` tool updates an existing code index after files have been created, modified, or deleted. It's functionally identical to [`codemogger_index`](/api/mcp-index) but is semantically distinct to emphasize its use case: **keeping the search index fresh after code changes**.
+
+This tool only re-processes changed files, making it fast for typical editing workflows.
+
+## Tool Name
+
+```
+codemogger_reindex
+```
+
+## Input Schema
+
+<ParamField path="directory" type="string" required>
+  Absolute path to the directory to reindex. This should be the same directory that was originally indexed with `codemogger_index`.
+</ParamField>
+
+## Response Format
+
+<ResponseField name="content" type="array">
+  Array containing a single text object with reindexing statistics.
+  
+  <ResponseField name="type" type="string">
+    Always `"text"`
+  </ResponseField>
+  
+  <ResponseField name="text" type="string">
+    Multi-line summary with the following information:
+    - Number of changed files reindexed
+    - Number of unchanged files skipped
+    - Number of stale chunks removed (if files were deleted)
+    - Duration in milliseconds
+    - Any errors encountered (if applicable)
+  </ResponseField>
+</ResponseField>
+
+### Example Response (Few Changes)
+
+```
+Reindexed: 3 changed files, 1244 unchanged
+Duration: 1840ms
+```
+
+### Example Response (With Deletions)
+
+```
+Reindexed: 8 changed files, 1239 unchanged
+Removed: 42 stale
+Duration: 3120ms
+```
+
+### Example Response (With Errors)
+
+```
+Reindexed: 5 changed files, 1242 unchanged
+Duration: 2450ms
+Errors: Parse error in src/buggy.ts
+```
+
+## Usage Examples
+
+### After Editing Files
+
+**Scenario**: AI agent has modified 2 TypeScript files and wants to update the search index.
+
+```json
+{
+  "directory": "/home/user/projects/my-backend"
+}
+```
+
+**Response**:
+```
+Reindexed: 2 changed files, 340 unchanged
+Duration: 980ms
+```
+
+**What happens**:
+1. Detects that 2 files have newer modification times than their indexed versions
+2. Re-parses those 2 files and updates their chunks
+3. Skips the 340 unchanged files
+4. Updates the search index in less than 1 second
+
+### After Deleting Files
+
+**Scenario**: AI agent has deleted obsolete source files and wants to clean up the index.
+
+```json
+{
+  "directory": "/home/user/projects/my-backend"
+}
+```
+
+**Response**:
+```
+Reindexed: 0 changed files, 325 unchanged
+Removed: 134 stale
+Duration: 420ms
+```
+
+**What happens**:
+1. Detects that some indexed files no longer exist on disk
+2. Removes their chunks from the database (134 chunks from ~5 deleted files)
+3. No files needed re-processing
+4. Index is now clean and up-to-date
+
+### After Creating New Files
+
+**Scenario**: AI agent has created 3 new source files.
+
+```json
+{
+  "directory": "/home/user/projects/my-backend"
+}
+```
+
+**Response**:
+```
+Reindexed: 3 changed files, 342 unchanged
+Duration: 1250ms
+```
+
+**What happens**:
+1. Discovers 3 new files that aren't in the database
+2. Parses and indexes them
+3. Adds their chunks and embeddings to the database
+4. Skips all existing unchanged files
+
+## Best Practices for AI Agents
+
+1. **Call at the end of every task**: If your task involved creating, modifying, or deleting source files, always run `codemogger_reindex` before finishing. This ensures the index stays fresh for future sessions.
+
+2. **Use the same directory path**: Always reindex the same root directory that was originally indexed. Don't index subdirectories.
+
+3. **Don't reindex unnecessarily**: If you only read files or made non-code changes (e.g., updating documentation, configuration), reindexing isn't needed.
+
+4. **Expect fast execution**: Reindexing is incremental and typically completes in seconds, even for large codebases.
+
+5. **Check for errors**: If errors are reported, investigate whether they affect critical code paths.
+
+## When to Use This Tool
+
+**ALWAYS** use this tool after:
+- Creating new source files
+- Modifying existing functions, classes, or types
+- Deleting source files
+- Refactoring code across multiple files
+- Any task that changes the codebase structure
+
+**DON'T** use this tool after:
+- Only reading files
+- Modifying non-code files (markdown, JSON config, etc.)
+- Making trivial changes to comments or whitespace
+
+## Workflow Integration
+
+### Typical AI Agent Workflow
+
+1. **Start task**: User asks to implement a new feature
+2. **Search existing code**: Use [`codemogger_search`](/api/mcp-search) to understand current implementation
+3. **Make changes**: Create/modify source files
+4. **Test changes**: Run tests, verify functionality
+5. **Update index**: Run `codemogger_reindex` to keep search index fresh
+6. **Complete task**: Report results to user
+
+### Example: Adding a New Feature
+
+```typescript
+// Agent workflow:
+// 1. Search for related code
+codemogger_search({
+  query: "user authentication",
+  mode: "semantic",
+  limit: 10
+})
+
+// 2. Create new auth module (agent uses file tools)
+// src/auth/oauth.ts created
+// src/auth/providers.ts created
+
+// 3. Modify existing files (agent uses file tools)
+// src/routes/auth.ts modified
+
+// 4. Reindex to capture changes
+codemogger_reindex({
+  directory: "/home/user/projects/my-backend"
+})
+// Response: Reindexed: 3 changed files, 340 unchanged
+```
+
+## Performance Comparison
+
+| Operation | Files Changed | Duration (example) |
+|-----------|---------------|--------------------|
+| Initial index | All (1000) | 45s |
+| Reindex after small edit | 2 | 1s |
+| Reindex after refactor | 50 | 8s |
+| Reindex after deletion | 0 (5 deleted) | 0.4s |
+
+## Differences from `codemogger_index`
+
+Technically, `codemogger_reindex` and `codemogger_index` are **identical** in functionality. Both perform incremental indexing.
+
+The distinction is semantic:
+- **`codemogger_index`**: Initial indexing of a new codebase
+- **`codemogger_reindex`**: Updating an existing index after changes
+
+Using the correct tool name makes AI agent workflows clearer and more maintainable.
+
+## Error Handling
+
+Common errors and how to handle them:
+
+- **Parse errors**: Usually caused by syntax errors in source files. The file will be skipped, but other files continue processing.
+- **Permission errors**: Ensure the directory and files are readable.
+- **Unsupported file types**: Non-source files are automatically skipped.
+- **Database errors**: Check that the SQLite database isn't corrupted or locked.
+
+## Related Tools
+
+- [`codemogger_index`](/api/mcp-index): Initial indexing of a codebase
+- [`codemogger_search`](/api/mcp-search): Search the indexed codebase

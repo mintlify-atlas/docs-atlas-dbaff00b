@@ -1,0 +1,144 @@
+---
+title: IndexOptions
+description: Configuration options for indexing operations
+---
+
+## Interface
+
+```typescript
+export interface IndexOptions {
+  languages?: string[];
+  verbose?: boolean;
+}
+```
+
+## Properties
+
+<ParamField path="languages" type="string[]">
+  Array of language file extensions to index.
+  
+  When specified, only files with these extensions will be indexed. If not specified, all supported languages are indexed.
+  
+  **Supported languages:** TypeScript (`.ts`, `.tsx`), JavaScript (`.js`, `.jsx`, `.mjs`), Python (`.py`), Rust (`.rs`), Go (`.go`), Java (`.java`), C/C++ (`.c`, `.cpp`, `.h`, `.hpp`), and more.
+  
+  ### Example
+  
+  ```typescript
+  // Only index TypeScript and JavaScript files
+  await index.index('./my-project', {
+    languages: ['ts', 'tsx', 'js', 'jsx']
+  });
+  ```
+</ParamField>
+
+<ParamField path="verbose" type="boolean" default="false">
+  Enable verbose logging with detailed timing information.
+  
+  When `true`, logs timing information for each indexing phase:
+  - **scan** - Time spent scanning directory for source files
+  - **chunk+embed** - Time spent chunking files with tree-sitter and generating embeddings
+  - **fts** - Time spent building full-text search index
+  
+  ### Example
+  
+  ```typescript
+  await index.index('./my-project', {
+    verbose: true
+  });
+  // Logs: scan: 125ms, chunk+embed: 3450ms (256 chunks), fts: 87ms
+  ```
+</ParamField>
+
+## Return Type
+
+### IndexResult
+
+The `index()` method returns an `IndexResult` object:
+
+```typescript
+export interface IndexResult {
+  files: number;
+  chunks: number;
+  embedded: number;
+  skipped: number;
+  removed: number;
+  errors: string[];
+  duration: number;
+}
+```
+
+<ResponseField name="files" type="number">
+  Number of files processed (chunked and indexed)
+</ResponseField>
+
+<ResponseField name="chunks" type="number">
+  Number of code chunks created from the processed files
+</ResponseField>
+
+<ResponseField name="embedded" type="number">
+  Number of chunks that received new embeddings (excludes unchanged files)
+</ResponseField>
+
+<ResponseField name="skipped" type="number">
+  Number of files skipped because they haven't changed since the last index
+</ResponseField>
+
+<ResponseField name="removed" type="number">
+  Number of stale files removed from the index (files that no longer exist)
+</ResponseField>
+
+<ResponseField name="errors" type="string[]">
+  Array of error messages encountered during indexing. Each error includes the file path and error description.
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Total indexing time in milliseconds
+</ResponseField>
+
+## Examples
+
+### Index All Supported Languages
+
+```typescript
+const result = await index.index('./my-project');
+console.log(`Indexed ${result.files} files with ${result.chunks} chunks`);
+if (result.errors.length > 0) {
+  console.error('Errors:', result.errors);
+}
+```
+
+### Index Specific Languages with Verbose Logging
+
+```typescript
+const result = await index.index('./my-project', {
+  languages: ['ts', 'tsx', 'js', 'jsx'],
+  verbose: true
+});
+
+console.log(`
+  Files processed: ${result.files}
+  Chunks created: ${result.chunks}
+  Embeddings generated: ${result.embedded}
+  Files skipped: ${result.skipped}
+  Files removed: ${result.removed}
+  Duration: ${result.duration}ms
+`);
+```
+
+### Incremental Indexing
+
+Codemogger automatically detects unchanged files and skips re-indexing them:
+
+```typescript
+// First index
+const result1 = await index.index('./my-project');
+// files: 100, skipped: 0
+
+// Second index (no changes)
+const result2 = await index.index('./my-project');
+// files: 0, skipped: 100
+
+// Third index (after modifying 5 files)
+const result3 = await index.index('./my-project');
+// files: 5, skipped: 95
+```

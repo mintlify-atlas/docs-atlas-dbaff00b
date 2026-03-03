@@ -1,0 +1,324 @@
+---
+title: 'Code Chunking'
+description: 'Tree-sitter AST-aware semantic chunking'
+icon: 'scissors'
+---
+
+## Why AST-Aware Chunking?
+
+Naive chunking strategies (line-based, character-based) break code at arbitrary boundaries, splitting functions mid-body or separating signatures from implementations. This degrades search quality because:
+
+- **Semantic units are fragmented** — a function's signature might be in one chunk, its body in another
+- **Context is lost** — embeddings can't capture what a function does if they only see half of it
+- **Noise increases** — partial definitions confuse the model
+
+Codemogger uses **tree-sitter** to parse source code into an Abstract Syntax Tree (AST) and extract complete, semantically meaningful units.
+
+<Info>
+Tree-sitter is a parser generator tool and incremental parsing library. It builds a concrete syntax tree for source code and supports 13 languages via WASM grammars.
+</Info>
+
+---
+
+## How It Works
+
+### Step 1: Parse with Tree-sitter
+
+Each file is parsed into an AST using language-specific WASM grammars:
+
+```typescript
+const parser = new Parser();
+const lang = await Language.load(config.wasmPath);
+parser.setLanguage(lang);
+
+const tree = parser.parse(content);
+```
+
+**Supported languages:**
+Rust, C, C++, Go, Python, Zig, Java, Scala, JavaScript, TypeScript, TSX, PHP, Ruby
+
+### Step 2: Extract Top-Level Definitions
+
+Walk the AST and identify top-level nodes matching configured types:
+
+**Example (Rust):**
+```typescript
+topLevelNodes: [
+  "function_item",
+  "struct_item",
+  "enum_item",
+  "impl_item",
+  "trait_item",
+  "type_item",
+  "const_item",
+  "static_item",
+  "macro_definition",
+  "mod_item",
+]
+```
+
+**Example (TypeScript):**
+```typescript
+topLevelNodes: [
+  "function_declaration",
+  "class_declaration",
+  "interface_declaration",
+  "type_alias_declaration",
+  "enum_declaration",
+  "export_statement",
+  "lexical_declaration",  // const/let
+]
+```
+
+Each top-level node becomes a **chunk** with extracted metadata.
+
+---
+
+### Step 3: Extract Metadata
+
+For each chunk, extract:
+
+1. **Name** — function name, struct name, class name, etc.
+2. **Kind** — normalized type (function, struct, class, method, etc.)
+3. **Signature** — first line of the definition
+4. **Snippet** — full source code
+5. **Line range** — start and end line numbers
+
+**Implementation:** `src/chunk/treesitter.ts:34`
+
+```typescript
+function extractName(node: SyntaxNode): string {
+  // Handle wrapped nodes (export, decorators, templates)
+  if (node.type === "export_statement") {
+    const inner = unwrapExport(node);
+    if (inner) return extractName(inner);
+  }
+  
+  // Try common field names
+  for (const childType of ["name", "identifier", "type_identifier"]) {
+    const child = node.childForFieldName(childType);
+    if (child) return child.text;
+  }
+  
+  // Language-specific handling...
+}
+```
+
+**Example chunk:**
+```json
+{
+  "chunkKey": "src/db/store.ts:45:67",
+  "filePath": "src/db/store.ts",
+  "language": "typescript",
+  "kind": "method",
+  "name": "vectorSearch",
+  "signature": "async vectorSearch(queryVec: number[], limit: number): Promise<SearchResult[]> {",
+  "snippet": "async vectorSearch(queryVec: number[], limit: number): Promise<SearchResult[]> {\n  const stmt = this.db.prepare(...)\n  // ... full method body\n}",
+  "startLine": 45,
+  "endLine": 67
+}
+```
+
+---
+
+## Splitting Large Items
+
+If a top-level item exceeds **150 lines**, it's split into sub-items to keep chunks focused.
+
+**Example:** A 500-line class is split into individual methods.
+
+**Implementation:** `src/chunk/treesitter.ts:304`
+
+```typescript
+const MAX_CHUNK_LINES = 150;
+
+function splitLargeNode(node: SyntaxNode, outerNode: SyntaxNode): void {
+  let hasSubItems = false;
+
+  for (const sub of node.children) {
+    if (isSubItem(sub.type)) {
+      chunks.push(makeChunk(sub, nodeKind(sub.type)));
+      hasSubItems = true;
+    } else if (bodyWrappers.has(sub.type)) {
+      // Walk into class_body, declaration_list, etc.
+      for (const inner of sub.children) {
+        if (isSubItem(inner.type)) {
+          chunks.push(makeChunk(inner, nodeKind(inner.type)));
+          hasSubItems = true;
+        }
+      }
+    }
+  }
+
+  // If no sub-items found, emit the whole block
+  if (!hasSubItems) {
+    chunks.push(makeChunk(outerNode, nodeKind(node.type)));
+  }
+}
+```
+
+**Why 150 lines?**
+- Keeps embeddings focused on a single concept
+- Fits within typical context windows for local models
+- Balances between too-granular (noise) and too-coarse (loss of precision)
+
+<Tip>
+For most codebases, 80-90% of items are under 150 lines and remain whole.
+</Tip>
+
+---
+
+## Language-Specific Handling
+
+### Unwrapping Wrappers
+
+Some constructs wrap other definitions:
+
+**TypeScript exports:**
+```typescript
+export function authenticate(token: string) { ... }
+```
+
+The AST structure is:
+```
+export_statement
+  └─ function_declaration (name: "authenticate")
+```
+
+Codemogger unwraps the export to extract the inner function, but uses the outer node's line range (to include the `export` keyword).
+
+**Python decorators:**
+```python
+@require_auth
+def get_user(id: int):
+    ...
+```
+
+AST structure:
+```
+decorated_definition
+  ├─ decorator (@require_auth)
+  └─ function_definition (name: "get_user")
+```
+
+Codemogger unwraps to get the function name but includes decorators in the chunk.
+
+**C++ templates:**
+```cpp
+template<typename T>
+class Container { ... };
+```
+
+AST structure:
+```
+template_declaration
+  ├─ template_parameter_list
+  └─ class_specifier (name: "Container")
+```
+
+Codemogger unwraps to extract the class name.
+
+### Special Cases
+
+**Rust impl blocks:**
+```rust
+impl Display for User {
+    fn fmt(&self, f: &mut Formatter) -> Result { ... }
+}
+```
+
+Name extraction:
+```typescript
+const typeNode = node.childForFieldName("type");  // "User"
+const traitNode = node.childForFieldName("trait");  // "Display"
+return `${traitNode.text} for ${typeNode.text}`;  // "Display for User"
+```
+
+**Go methods:**
+```go
+func (u *User) Authenticate(token string) error { ... }
+```
+
+Name extraction:
+```typescript
+const nameNode = node.childForFieldName("name");  // "Authenticate"
+const receiver = node.childForFieldName("receiver");  // "*User"
+return `${receiver.text}.${nameNode.text}`;  // "*User.Authenticate"
+```
+
+---
+
+## Chunk Lifecycle
+
+Each chunk gets a unique key based on file path and line range:
+
+```
+<filepath>:<startLine>:<endLine>
+```
+
+**Example:**
+```
+src/search/rank.ts:16:49
+```
+
+This key is used to:
+- Deduplicate chunks across re-indexes
+- Track which chunks need re-embedding (when code changes)
+- Link chunks to their embeddings
+
+**When a file changes:**
+1. Old chunks for that file are deleted
+2. New chunks are extracted from the updated AST
+3. Only new/modified chunks are re-embedded
+
+---
+
+## Chunk Statistics
+
+Real-world examples:
+
+| Project | Files | Chunks | Avg Chunks/File | Avg Lines/Chunk |
+|---------|------:|-------:|----------------:|----------------:|
+| **Turso** | 748 | 4,123 | 5.5 | 42 |
+| **Bun** | 9,255 | 48,291 | 5.2 | 38 |
+| **TypeScript** | 39,298 | 203,147 | 5.2 | 51 |
+| **Kubernetes** | 16,668 | 89,234 | 5.4 | 45 |
+
+<Note>
+Most chunks are **functions** (60-70%), followed by classes/structs (15-20%), then types/interfaces (10-15%).
+</Note>
+
+---
+
+## Benefits
+
+<CardGroup cols={2}>
+  <Card title="Semantic Integrity" icon="shield-check">
+    Each chunk is a complete, meaningful unit — no broken functions or orphaned signatures
+  </Card>
+  <Card title="Better Embeddings" icon="brain">
+    Models can understand full context, improving search relevance
+  </Card>
+  <Card title="Precise Results" icon="bullseye">
+    Search returns exact definitions, not file fragments
+  </Card>
+  <Card title="Language Aware" icon="code">
+    Handles language-specific constructs (traits, decorators, templates)
+  </Card>
+</CardGroup>
+
+---
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="How It Works" icon="gear" href="/concepts/how-it-works">
+    See how chunking fits into the 5-phase indexing pipeline
+  </Card>
+  <Card title="Embeddings" icon="cube" href="/concepts/embeddings">
+    Learn how chunks are encoded into vectors
+  </Card>
+  <Card title="Search Modes" icon="magnifying-glass" href="/concepts/search-modes">
+    Understand how chunks are retrieved during search
+  </Card>
+</CardGroup>

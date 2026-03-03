@@ -1,0 +1,217 @@
+---
+title: 'How It Works'
+description: 'Understanding the 5-phase indexing process in Codemogger'
+icon: 'gear'
+---
+
+## Overview
+
+Codemogger transforms your codebase into a searchable knowledge base through a 5-phase indexing pipeline. Each phase is optimized for incremental updates and handles large codebases efficiently.
+
+<Info>
+The entire process is **incremental** — only changed files (detected by SHA-256 hash) are re-processed on subsequent runs.
+</Info>
+
+## The 5 Phases
+
+### Phase 1: Scan
+
+Walk the directory tree and discover all source files.
+
+**What happens:**
+- Recursively traverse directories starting from the root
+- Respect `.gitignore` patterns to skip build artifacts and dependencies
+- Detect language from file extension
+- Compute SHA-256 hash of file content for change detection
+
+**Implementation:** `src/scan/walker.ts`
+
+```typescript
+const { files, errors } = await scanDirectory(rootDir, opts?.languages);
+```
+
+**Output:** List of files with metadata:
+- Absolute path
+- File content
+- SHA-256 hash
+- Detected language
+
+---
+
+### Phase 2: Hash Check & Chunking
+
+Determine which files changed, then parse them into semantic chunks.
+
+**Hash verification:**
+```typescript
+const storedHash = await store.getFileHash(codebaseId, file.absPath);
+if (storedHash === file.hash) {
+  skipped++;  // File unchanged, skip
+} else {
+  filesToProcess.push(file);  // File new/modified, process
+}
+```
+
+**Tree-sitter chunking:**
+- Parse source code into an Abstract Syntax Tree (AST)
+- Extract top-level definitions: functions, classes, structs, impl blocks, etc.
+- Split large items (>150 lines) into sub-items (e.g., methods within a class)
+
+<Note>
+See [Chunking](/concepts/chunking) for detailed information on how tree-sitter parses code into semantic units.
+</Note>
+
+**Implementation:** `src/chunk/treesitter.ts:161`
+
+```typescript
+const chunks = await chunkFile(
+  file.absPath,
+  file.content,
+  file.hash,
+  langConfig,
+);
+```
+
+**Batch processing:**
+Files are processed in batches of 200 to balance memory usage and throughput.
+
+---
+
+### Phase 3: Embedding
+
+Encode each chunk into a vector representation for semantic search.
+
+**What happens:**
+- Query database for "stale" embeddings (chunks without embeddings for the current model)
+- Build embedding text from chunk metadata:
+  ```
+  filepath: kind name
+  signature
+  [snippet preview (500 chars)]
+  ```
+- Encode in batches of 64 chunks to avoid OOM
+- Store embeddings in SQLite with `vector8` quantization (int8, 395 bytes/chunk)
+
+**Implementation:** `src/index.ts:182`
+
+```typescript
+while (true) {
+  const stale = await store.getStaleEmbeddings(
+    codebaseId,
+    this.embeddingModel,
+    1000,
+  );
+  if (stale.length === 0) break;
+
+  for (let i = 0; i < stale.length; i += EMBED_BATCH) {
+    const slice = stale.slice(i, i + EMBED_BATCH);
+    const texts = slice.map(buildEmbedText);
+    const vectors = await this.embedder(texts);
+    await store.batchUpsertEmbeddings(...);
+    embedded += vectors.length;
+  }
+}
+```
+
+<Tip>
+Embedding dominates indexing time (~97%). The default model `all-MiniLM-L6-v2` runs locally with no API calls.
+</Tip>
+
+<Note>
+Learn more about [Embeddings](/concepts/embeddings) and vector search.
+</Note>
+
+---
+
+### Phase 4: Cleanup
+
+Remove chunks from deleted files.
+
+**What happens:**
+- Track all active files during scan (Phase 1)
+- Compare against files currently in database
+- Delete chunks for files no longer present
+
+**Implementation:** `src/index.ts:210`
+
+```typescript
+const removed = await store.removeStaleFiles(codebaseId, activeFiles);
+```
+
+This keeps the database clean and prevents stale results from appearing in searches.
+
+---
+
+### Phase 5: FTS Index Build
+
+Build per-codebase full-text search tables.
+
+**What happens:**
+- Create/rebuild FTS5 virtual table for the codebase
+- Index chunk metadata with weighted fields:
+  - `name` (weight: 10) — function/class names
+  - `kind` (weight: 5) — function, struct, impl, etc.
+  - `signature` (weight: 3) — first line of definition
+  - `snippet` (weight: 1) — full code content
+
+**Why per-codebase tables?**
+- Faster keyword search (smaller index)
+- Better BM25 relevance (term frequencies relative to codebase, not all codebases)
+- Cleaner isolation when managing multiple projects
+
+**Implementation:** `src/index.ts:214`
+
+```typescript
+await store.rebuildFtsTable(codebaseId);
+```
+
+<Info>
+FTS (Full-Text Search) powers **keyword search mode** — fast, precise identifier lookup.
+</Info>
+
+---
+
+## Performance
+
+Benchmarked on real-world codebases (Apple M2, 8GB RAM):
+
+| Project | Language | Files | Index Time | Storage |
+|---------|----------|------:|----------:|---------:|
+| **Turso** | Rust | 748 | ~3 min | 45 MB |
+| **Bun** | Zig | 9,255 | ~25 min | 520 MB |
+| **TypeScript** | TypeScript | 39,298 | ~90 min | 2.1 GB |
+| **Kubernetes** | Go | 16,668 | ~40 min | 980 MB |
+
+<Note>
+These times are for initial indexing. Subsequent runs only re-process changed files.
+</Note>
+
+## Incremental Updates
+
+When you re-run `codemogger index` or `codemogger_reindex`:
+
+1. **Phase 1-2:** Only files with different SHA-256 hashes are chunked
+2. **Phase 3:** Only chunks without embeddings for the current model are embedded
+3. **Phase 4:** Deleted files are removed
+4. **Phase 5:** FTS table is rebuilt (fast, less than 1s for most codebases)
+
+Typical update time for a single file change: **less than 5 seconds**
+
+---
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Chunking" icon="scissors" href="/concepts/chunking">
+    Learn how tree-sitter parses code into semantic chunks
+  </Card>
+  <Card title="Search Modes" icon="magnifying-glass" href="/concepts/search-modes">
+    Understand semantic, keyword, and hybrid search
+  </Card>
+  <Card title="Embeddings" icon="cube" href="/concepts/embeddings">
+    How vector search works under the hood
+  </Card>
+  <Card title="SDK Reference" icon="code" href="/api/code-index">
+    CodeIndex API documentation
+  </Card>
+</CardGroup>

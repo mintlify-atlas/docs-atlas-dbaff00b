@@ -1,0 +1,447 @@
+---
+title: "Supported Languages"
+description: "Complete list of supported programming languages and their configurations"
+---
+
+## Overview
+
+Codemogger supports **14 programming languages** through tree-sitter grammars. Each language is configured to extract specific code constructs (functions, classes, types, etc.) and handle large items appropriately.
+
+<Info>
+  All language parsers run locally via WebAssembly (WASM) with no external dependencies.
+</Info>
+
+## Supported Languages
+
+<CardGroup cols={3}>
+  <Card title="Rust" icon="rust">
+    .rs
+  </Card>
+  <Card title="JavaScript" icon="js">
+    .js, .jsx, .mjs, .cjs
+  </Card>
+  <Card title="TypeScript" icon="code">
+    .ts, .tsx, .mts, .cts
+  </Card>
+  <Card title="Python" icon="python">
+    .py, .pyi
+  </Card>
+  <Card title="Go" icon="golang">
+    .go
+  </Card>
+  <Card title="C" icon="c">
+    .c, .h
+  </Card>
+  <Card title="C++" icon="code">
+    .cpp, .cc, .cxx, .hpp, .hh, .hxx
+  </Card>
+  <Card title="C#" icon="code">
+    .cs
+  </Card>
+  <Card title="Java" icon="java">
+    .java
+  </Card>
+  <Card title="Scala" icon="code">
+    .scala, .sc
+  </Card>
+  <Card title="Zig" icon="code">
+    .zig
+  </Card>
+  <Card title="PHP" icon="php">
+    .php
+  </Card>
+  <Card title="Ruby" icon="gem">
+    .rb
+  </Card>
+</CardGroup>
+
+## Language Details
+
+### Rust
+
+<ParamField path="Extensions" type="string[]">
+  .rs
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `function_item` - Functions and methods
+  - `struct_item` - Struct definitions
+  - `enum_item` - Enum definitions
+  - `impl_item` - Implementation blocks
+  - `trait_item` - Trait definitions
+  - `type_item` - Type aliases
+  - `const_item` - Constant declarations
+  - `static_item` - Static variables
+  - `macro_definition` - Macro definitions
+  - `mod_item` - Module declarations
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `impl_item`, `trait_item`, `mod_item` - Large impl blocks, traits, and modules are split into sub-items
+</ParamField>
+
+---
+
+### JavaScript
+
+<ParamField path="Extensions" type="string[]">
+  .js, .jsx, .mjs, .cjs
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `function_declaration` - Function declarations
+  - `generator_function_declaration` - Generator functions
+  - `class_declaration` - Class definitions
+  - `variable_declaration` - var declarations
+  - `lexical_declaration` - let/const declarations
+  - `export_statement` - Export statements
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `class_declaration` - Large classes are split into methods
+</ParamField>
+
+---
+
+### TypeScript
+
+<ParamField path="Extensions" type="string[]">
+  .ts, .mts, .cts
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `function_declaration` - Function declarations
+  - `generator_function_declaration` - Generator functions
+  - `class_declaration` - Class definitions
+  - `abstract_class_declaration` - Abstract classes
+  - `interface_declaration` - Interface definitions
+  - `type_alias_declaration` - Type aliases
+  - `enum_declaration` - Enum definitions
+  - `variable_declaration` - var declarations
+  - `lexical_declaration` - let/const declarations
+  - `export_statement` - Export statements
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `class_declaration`, `abstract_class_declaration`, `interface_declaration`
+</ParamField>
+
+---
+
+### TSX (TypeScript + JSX)
+
+<ParamField path="Extensions" type="string[]">
+  .tsx
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  Same as TypeScript (supports JSX syntax)
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `class_declaration`, `abstract_class_declaration`, `interface_declaration`
+</ParamField>
+
+---
+
+### Python
+
+<ParamField path="Extensions" type="string[]">
+  .py, .pyi
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `function_definition` - Function definitions
+  - `class_definition` - Class definitions
+  - `decorated_definition` - Decorated functions/classes
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `class_definition` - Large classes are split into methods
+</ParamField>
+
+---
+
+### Go
+
+<ParamField path="Extensions" type="string[]">
+  .go
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `function_declaration` - Function declarations
+  - `method_declaration` - Method declarations
+  - `type_declaration` - Type definitions
+  - `const_declaration` - Constant declarations
+  - `var_declaration` - Variable declarations
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  None - Go definitions are typically concise
+</ParamField>
+
+---
+
+### C
+
+<ParamField path="Extensions" type="string[]">
+  .c, .h
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `function_definition` - Function definitions
+  - `declaration` - Variable/function declarations
+  - `type_definition` - Type definitions (typedef)
+  - `enum_specifier` - Enum definitions
+  - `struct_specifier` - Struct definitions
+  - `preproc_def` - Preprocessor definitions
+  - `preproc_function_def` - Preprocessor function macros
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  None
+</ParamField>
+
+---
+
+### C++
+
+<ParamField path="Extensions" type="string[]">
+  .cpp, .cc, .cxx, .hpp, .hh, .hxx
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `function_definition` - Function definitions
+  - `class_specifier` - Class definitions
+  - `struct_specifier` - Struct definitions
+  - `enum_specifier` - Enum definitions
+  - `namespace_definition` - Namespace definitions
+  - `template_declaration` - Template declarations
+  - `declaration` - Variable/function declarations
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `class_specifier`, `struct_specifier`, `namespace_definition`
+</ParamField>
+
+---
+
+### C#
+
+<ParamField path="Extensions" type="string[]">
+  .cs
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `class_declaration` - Class definitions
+  - `interface_declaration` - Interface definitions
+  - `struct_declaration` - Struct definitions
+  - `enum_declaration` - Enum definitions
+  - `record_declaration` - Record definitions
+  - `method_declaration` - Method declarations
+  - `namespace_declaration` - Namespace definitions
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `class_declaration`, `interface_declaration`, `struct_declaration`, `namespace_declaration`
+</ParamField>
+
+---
+
+### Java
+
+<ParamField path="Extensions" type="string[]">
+  .java
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `class_declaration` - Class definitions
+  - `interface_declaration` - Interface definitions
+  - `enum_declaration` - Enum definitions
+  - `record_declaration` - Record definitions (Java 14+)
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `class_declaration`, `interface_declaration`, `enum_declaration`
+</ParamField>
+
+---
+
+### Scala
+
+<ParamField path="Extensions" type="string[]">
+  .scala, .sc
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `class_definition` - Class definitions
+  - `object_definition` - Object definitions
+  - `trait_definition` - Trait definitions
+  - `function_definition` - Function definitions
+  - `val_definition` - Value definitions
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `class_definition`, `object_definition`, `trait_definition`
+</ParamField>
+
+---
+
+### Zig
+
+<ParamField path="Extensions" type="string[]">
+  .zig
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `function_declaration` - Function declarations
+  - `variable_declaration` - Variable declarations
+  - `test_declaration` - Test blocks
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  None
+</ParamField>
+
+---
+
+### PHP
+
+<ParamField path="Extensions" type="string[]">
+  .php
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `class_declaration` - Class definitions
+  - `interface_declaration` - Interface definitions
+  - `trait_declaration` - Trait definitions
+  - `function_definition` - Function definitions
+  - `enum_declaration` - Enum definitions (PHP 8.1+)
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `class_declaration`, `interface_declaration`, `trait_declaration`
+</ParamField>
+
+---
+
+### Ruby
+
+<ParamField path="Extensions" type="string[]">
+  .rb
+</ParamField>
+
+<ParamField path="Top-level nodes" type="string[]">
+  - `module` - Module definitions
+  - `class` - Class definitions
+  - `method` - Method definitions
+  - `singleton_method` - Singleton methods
+  - `assignment` - Top-level assignments
+</ParamField>
+
+<ParamField path="Splittable nodes" type="string[]">
+  `module`, `class`
+</ParamField>
+
+## Chunking Behavior
+
+### Top-level Extraction
+
+Codemogger extracts top-level definitions from each file:
+
+<Steps>
+  <Step title="Parse file">
+    Parse file with tree-sitter to generate AST
+  </Step>
+  <Step title="Extract nodes">
+    Extract all top-level nodes matching the language configuration
+  </Step>
+  <Step title="Generate chunks">
+    Create a chunk for each extracted node with metadata
+  </Step>
+</Steps>
+
+### Large Item Splitting
+
+Items exceeding **150 lines** are split into sub-items:
+
+<Tabs>
+  <Tab title="Before Splitting">
+    ```rust
+    // 250-line impl block
+    impl LargeStruct {
+        fn method_1() { ... }  // lines 1-50
+        fn method_2() { ... }  // lines 51-100
+        fn method_3() { ... }  // lines 101-150
+        fn method_4() { ... }  // lines 151-200
+        fn method_5() { ... }  // lines 201-250
+    }
+    ```
+  </Tab>
+  <Tab title="After Splitting">
+    ```rust
+    // Split into 5 chunks:
+    // Chunk 1: method_1 (lines 1-50)
+    // Chunk 2: method_2 (lines 51-100)
+    // Chunk 3: method_3 (lines 101-150)
+    // Chunk 4: method_4 (lines 151-200)
+    // Chunk 5: method_5 (lines 201-250)
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Only splittable nodes (classes, impl blocks, modules, etc.) are split. Simple functions always remain intact.
+</Note>
+
+## Adding New Languages
+
+To add support for a new language, you need:
+
+1. **Tree-sitter grammar** (WASM build)
+2. **Language configuration** defining top-level and splittable nodes
+3. **Extension mapping** to detect files
+
+<CodeGroup>
+```typescript Language Configuration
+const NEW_LANG: LanguageConfig = {
+  name: "mylang",
+  extensions: [".mylang"],
+  wasmPath: require.resolve("tree-sitter-mylang/tree-sitter-mylang.wasm"),
+  topLevelNodes: [
+    "function_declaration",
+    "class_declaration",
+  ],
+  splitNodes: ["class_declaration"],
+}
+```
+
+```typescript Register Language
+const LANGUAGES: LanguageConfig[] = [
+  RUST,
+  JAVASCRIPT,
+  TYPESCRIPT,
+  // ... other languages
+  NEW_LANG,  // Add your language
+]
+```
+</CodeGroup>
+
+<Tip>
+  Check the tree-sitter documentation for your language to identify the correct AST node types.
+</Tip>
+
+## Language Detection
+
+Languages are automatically detected by file extension:
+
+```typescript
+// Automatic detection
+const lang = detectLanguage("src/main.rs")  // Returns Rust config
+const lang = detectLanguage("app.tsx")      // Returns TSX config
+const lang = detectLanguage("script.py")    // Returns Python config
+```
+
+<Warning>
+  Files without recognized extensions are skipped during indexing.
+</Warning>

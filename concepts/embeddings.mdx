@@ -1,0 +1,387 @@
+---
+title: 'Embeddings'
+description: 'Local embeddings and vector search'
+icon: 'cube'
+---
+
+## What Are Embeddings?
+
+Embeddings are **dense vector representations** of text that capture semantic meaning. Similar concepts map to nearby points in vector space, even if they use different words.
+
+**Example:**
+```
+"authentication middleware"     → [0.12, -0.34, 0.89, ...] (384 dims)
+"user login verification code" → [0.15, -0.31, 0.91, ...]
+"database connection pool"      → [-0.67, 0.22, -0.11, ...]
+```
+
+The first two vectors are **similar** (high cosine similarity) even though they don't share words. The third is **dissimilar**.
+
+<Info>
+Codemogger uses embeddings to power **semantic search** — find code by describing what it does, not by guessing identifier names.
+</Info>
+
+---
+
+## The Embedding Model
+
+### Default: all-MiniLM-L6-v2
+
+Codemogger ships with `all-MiniLM-L6-v2` for local, offline embeddings:
+
+- **Dimensions:** 384
+- **Model size:** ~23 MB (q8 quantized)
+- **Speed:** ~500 chunks/sec on Apple M2
+- **Quality:** Excellent for code search (trained on diverse text including technical content)
+
+**Why this model?**
+- Small, fast, and runs on CPU
+- No API keys or network calls
+- High-quality sentence embeddings from the Sentence-BERT family
+- Well-suited for short code snippets (functions, classes)
+
+### Loading in the SDK
+
+```typescript
+import { pipeline } from "@huggingface/transformers";
+
+const extractor = await pipeline(
+  "feature-extraction",
+  "Xenova/all-MiniLM-L6-v2",
+  { dtype: "q8" }  // int8 quantization for smaller memory footprint
+);
+
+const embedder = async (texts: string[]): Promise<number[][]> => {
+  const output = await extractor(texts, {
+    pooling: "mean",      // Mean pooling over token embeddings
+    normalize: true       // L2 normalization for cosine similarity
+  });
+  return output.tolist() as number[][];
+};
+```
+
+### Using a Custom Model
+
+You can use any embedding model by providing your own `embedder` function:
+
+```typescript
+import { CodeIndex } from "codemogger";
+import OpenAI from "openai";
+
+const openai = new OpenAI();
+
+const embedder = async (texts: string[]): Promise<number[][]> => {
+  const response = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: texts,
+  });
+  return response.data.map(item => item.embedding);
+};
+
+const db = new CodeIndex({
+  dbPath: "./project.db",
+  embedder,
+  embeddingModel: "text-embedding-3-small",  // Stored in DB metadata
+});
+```
+
+<Warning>
+If you change the embedding model, you must **re-index** the entire codebase. Embeddings from different models are incompatible.
+</Warning>
+
+---
+
+## What Gets Embedded?
+
+Each code chunk is embedded as a **structured text document**:
+
+```
+<filepath>: <kind> <name>
+<signature>
+<snippet preview (500 chars)>
+```
+
+**Example:**
+
+Given this chunk:
+```typescript
+// src/search/rank.ts:16-49
+export function rrfMerge(
+  ftsResults: SearchResult[],
+  vecResults: SearchResult[],
+  limit: number,
+  k = 60,
+  ftsWeight = 0.4,
+  vecWeight = 0.6,
+): SearchResult[] {
+  const scores = new Map<string, number>();
+  const data = new Map<string, SearchResult>();
+  // ... (rest of implementation)
+}
+```
+
+**Embedding text:**
+```
+src/search/rank.ts: function rrfMerge
+export function rrfMerge(
+  ftsResults: SearchResult[],
+  vecResults: SearchResult[],
+  limit: number,
+  k = 60,
+  ftsWeight = 0.4,
+  vecWeight = 0.6,
+): SearchResult[] {
+  const scores = new Map<string, number>();
+  const data = new Map<string, SearchResult>();
+  // ... (truncated at 500 chars)
+```
+
+**Implementation:** `src/index.ts:114`
+
+```typescript
+function buildEmbedText(s: {
+  filePath: string;
+  kind: string;
+  name: string;
+  signature: string;
+  snippet: string;
+}): string {
+  let text = s.filePath;
+  if (s.kind && s.name) text += `: ${s.kind} ${s.name}`;
+  else if (s.name) text += `: ${s.name}`;
+  if (s.signature) text += `\n${s.signature}`;
+  if (s.snippet) {
+    const preview = s.snippet.slice(0, 500);
+    text += `\n${preview}`;
+  }
+  return text;
+}
+```
+
+**Why this format?**
+- **File path** provides context (e.g., `src/auth/middleware.ts` hints at authentication)
+- **Kind + name** captures the definition type ("function authenticate" vs "class AuthMiddleware")
+- **Signature** includes type information and parameter names
+- **Snippet preview** provides implementation details without overwhelming the embedding
+
+---
+
+## Vector Storage
+
+### SQLite with vector8 Quantization
+
+Embeddings are stored in SQLite using **int8 quantization** (`vector8`):
+
+- **Original:** 384 dimensions × 4 bytes (float32) = 1,536 bytes
+- **Quantized:** 384 dimensions × 1 byte (int8) + metadata = **395 bytes**
+
+**3.9x smaller** with minimal quality loss for code search.
+
+### Schema
+
+```sql
+CREATE TABLE embeddings (
+  chunk_key TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  embedding BLOB NOT NULL,  -- vector8 quantized
+  PRIMARY KEY (chunk_key, model_name)
+);
+```
+
+**Why store model name?**
+- Track which embedding model produced each vector
+- Support re-indexing when switching models
+- Detect stale embeddings (chunks embedded with an old model)
+
+---
+
+## Vector Search
+
+### Cosine Similarity
+
+Semantics search finds chunks with the highest **cosine similarity** to the query vector:
+
+```
+cosine_similarity(query, chunk) = (query · chunk) / (||query|| × ||chunk||)
+```
+
+Range: -1 (opposite) to 1 (identical). Typical matches: 0.3-0.7.
+
+### SQL Query
+
+```sql
+SELECT
+  c.chunk_key,
+  c.file_path,
+  c.kind,
+  c.name,
+  c.signature,
+  c.snippet,
+  vector_distance_cos(e.embedding, ?) AS score
+FROM embeddings e
+JOIN chunks c ON e.chunk_key = c.chunk_key
+WHERE e.model_name = ?
+ORDER BY score DESC
+LIMIT ?;
+```
+
+**Parameters:**
+- `?` (first) — query vector (float32 array, auto-quantized by SQLite)
+- `?` (second) — model name (e.g., "all-MiniLM-L6-v2")
+- `?` (third) — result limit
+
+<Tip>
+`vector_distance_cos` is provided by Turso's libSQL extensions. It automatically handles quantized vectors.
+</Tip>
+
+### Performance
+
+**Search time** (p50 over 3 runs, Apple M2):
+
+| Project | Chunks | Semantic Search Time |
+|---------|-------:|---------------------:|
+| **Turso** | 4,123 | 35 ms |
+| **Bun** | 48,291 | 137 ms |
+| **TypeScript** | 203,147 | 242 ms |
+| **Kubernetes** | 89,234 | 617 ms |
+
+**Why so fast?**
+- SQLite is optimized for read-heavy workloads
+- int8 quantization reduces memory bandwidth
+- Cosine similarity is a simple dot product + normalization
+- No network calls (embeddings stored locally)
+
+<Note>
+For datasets >100k chunks, consider adding a vector index (e.g., HNSW) for sub-linear search time. Current implementation is brute-force (linear scan).
+</Note>
+
+---
+
+## Embedding Pipeline
+
+Embeddings are generated in **Phase 3** of indexing.
+
+### Step 1: Find Stale Embeddings
+
+Query database for chunks without embeddings for the current model:
+
+```typescript
+const stale = await store.getStaleEmbeddings(
+  codebaseId,
+  this.embeddingModel,
+  1000,  // Batch size
+);
+```
+
+**A chunk is stale if:**
+- It has no embedding record at all
+- Its embedding was created with a different model
+
+### Step 2: Batch Embedding
+
+Embed in batches of 64 to avoid OOM:
+
+```typescript
+for (let i = 0; i < stale.length; i += EMBED_BATCH) {
+  const slice = stale.slice(i, i + EMBED_BATCH);
+  const texts = slice.map(buildEmbedText);
+  const vectors = await this.embedder(texts);
+  await store.batchUpsertEmbeddings(
+    slice.map((s, j) => ({
+      chunkKey: s.chunkKey,
+      embedding: vectors[j]!,
+      modelName: this.embeddingModel,
+    }))
+  );
+  embedded += vectors.length;
+}
+```
+
+**Why batching?**
+- Models are most efficient with batch inference
+- Reduces function call overhead
+- Limits memory usage (64 chunks × 1,536 bytes = ~98 KB per batch)
+
+### Step 3: Iterate Until Done
+
+```typescript
+while (true) {
+  const stale = await store.getStaleEmbeddings(...);
+  if (stale.length === 0) break;
+  // ... embed batch ...
+  if (stale.length < 1000) break;  // Last batch
+}
+```
+
+This handles arbitrarily large codebases without loading all chunks into memory.
+
+---
+
+## Embedding Cost
+
+### Time Breakdown
+
+Indexing time is dominated by embedding (~97%):
+
+**Example (Turso, 4,123 chunks):**
+- Scan: 150 ms
+- Chunk: 320 ms
+- **Embed: 165,000 ms** (~2.75 min)
+- FTS: 80 ms
+
+**Per-chunk:**
+- Embedding: ~40 ms/chunk (local CPU)
+- Chunking: ~0.08 ms/chunk
+- FTS indexing: ~0.02 ms/chunk
+
+<Tip>
+On subsequent runs, only **changed** chunks are re-embedded. Typical update time: less than 5 seconds for a single file change.
+</Tip>
+
+### Storage Breakdown
+
+**Example (Turso, 4,123 chunks, vector8):**
+- Chunks (metadata + snippets): ~25 MB
+- Embeddings (vector8): ~1.6 MB (4,123 × 395 bytes)
+- FTS index: ~18 MB
+- **Total:** ~45 MB
+
+Embeddings are **less than 5%** of total storage thanks to int8 quantization.
+
+---
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Local Models" icon="house">
+    Avoid API-based embeddings (cost, latency, privacy). Local models like all-MiniLM-L6-v2 are fast and free.
+  </Card>
+  <Card title="Stick to One Model" icon="lock">
+    Changing models requires re-indexing. Choose carefully.
+  </Card>
+  <Card title="Quantize for Storage" icon="compress">
+    Use vector8 (int8) for 4x smaller storage with minimal quality loss.
+  </Card>
+  <Card title="Batch Embedding" icon="layer-group">
+    Process 64-256 chunks at a time for optimal throughput.
+  </Card>
+</CardGroup>
+
+---
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Search Modes" icon="magnifying-glass" href="/concepts/search-modes">
+    Learn how semantic search uses embeddings
+  </Card>
+  <Card title="How It Works" icon="gear" href="/concepts/how-it-works">
+    See where embedding fits in the 5-phase pipeline
+  </Card>
+  <Card title="SDK Reference" icon="code" href="/api/code-index">
+    CodeIndex API with custom embedders
+  </Card>
+  <Card title="Chunking" icon="scissors" href="/concepts/chunking">
+    Understand what text is being embedded
+  </Card>
+</CardGroup>

@@ -1,0 +1,229 @@
+---
+title: CodeIndex
+description: Main class for indexing and searching code with semantic embeddings
+---
+
+## Constructor
+
+<ParamField path="opts" type="CodeIndexOptions" required>
+  Configuration options for the CodeIndex instance
+  
+  <Expandable title="properties">
+    <ParamField path="dbPath" type="string" required>
+      Path to the SQLite database file. Use `projectDbPath(dir)` helper to get the default path for a project.
+    </ParamField>
+    
+    <ParamField path="embedder" type="Embedder" required>
+      Embedding function that takes an array of text strings and returns their vector embeddings. SDK users must provide their own implementation.
+    </ParamField>
+    
+    <ParamField path="embeddingModel" type="string" required>
+      Name of the embedding model (e.g. "all-MiniLM-L6-v2"). This is stored alongside embeddings to track which model was used.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Example
+
+```typescript
+import { CodeIndex, projectDbPath } from 'codemogger';
+
+const embedder = async (texts: string[]) => {
+  // Your embedding implementation
+  return vectors;
+};
+
+const index = new CodeIndex({
+  dbPath: projectDbPath('./my-project'),
+  embedder,
+  embeddingModel: 'all-MiniLM-L6-v2'
+});
+```
+
+## Methods
+
+### index()
+
+Index a directory by scanning files, chunking with tree-sitter, generating embeddings, and storing in the database.
+
+<ParamField path="dir" type="string" required>
+  Directory path to index
+</ParamField>
+
+<ParamField path="opts" type="IndexOptions">
+  Optional indexing configuration
+  
+  <Expandable title="properties">
+    <ParamField path="languages" type="string[]">
+      Array of language extensions to index (e.g. `["ts", "js"]`). If not specified, all supported languages are indexed.
+    </ParamField>
+    
+    <ParamField path="verbose" type="boolean" default="false">
+      Enable verbose logging with timing information for scan, chunk, embed, and FTS phases.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="IndexResult" type="object">
+  <Expandable title="properties">
+    <ResponseField name="files" type="number">
+      Number of files processed (chunked and indexed)
+    </ResponseField>
+    
+    <ResponseField name="chunks" type="number">
+      Number of code chunks created
+    </ResponseField>
+    
+    <ResponseField name="embedded" type="number">
+      Number of chunks that received new embeddings
+    </ResponseField>
+    
+    <ResponseField name="skipped" type="number">
+      Number of files skipped (unchanged since last index)
+    </ResponseField>
+    
+    <ResponseField name="removed" type="number">
+      Number of stale files removed from index
+    </ResponseField>
+    
+    <ResponseField name="errors" type="string[]">
+      Array of error messages encountered during indexing
+    </ResponseField>
+    
+    <ResponseField name="duration" type="number">
+      Total indexing time in milliseconds
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```typescript
+const result = await index.index('./my-project', {
+  languages: ['ts', 'js'],
+  verbose: true
+});
+
+console.log(`Indexed ${result.files} files with ${result.chunks} chunks in ${result.duration}ms`);
+```
+
+### search()
+
+Search for code chunks relevant to a query using semantic, keyword, or hybrid search.
+
+<ParamField path="query" type="string" required>
+  Search query (natural language for semantic search, keywords for keyword search)
+</ParamField>
+
+<ParamField path="opts" type="SearchOptions">
+  Optional search configuration. See [SearchOptions](/api/search-options) for details.
+  
+  <Expandable title="properties">
+    <ParamField path="limit" type="number" default="5">
+      Maximum number of results to return
+    </ParamField>
+    
+    <ParamField path="threshold" type="number" default="0.0">
+      Minimum similarity score (0.0 to 1.0). Results below this threshold are filtered out.
+    </ParamField>
+    
+    <ParamField path="includeSnippet" type="boolean" default="false">
+      Whether to include code snippets in results
+    </ParamField>
+    
+    <ParamField path="mode" type="SearchMode" default="semantic">
+      Search mode: `"semantic"` (vector search), `"keyword"` (FTS), or `"hybrid"` (combined via RRF)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="SearchResult[]" type="SearchResult[]">
+  Array of search results. See [Types](/api/types#searchresult) for the SearchResult structure.
+</ResponseField>
+
+#### Search Modes
+
+- **`"semantic"`** - Natural language/conceptual queries using vector search (global across all codebases)
+- **`"keyword"`** - Precise identifier or term lookup using full-text search (queries all codebases)
+- **`"hybrid"`** - Combines both semantic and keyword search using reciprocal rank fusion
+
+#### Example
+
+```typescript
+// Semantic search
+const results = await index.search('authentication logic', {
+  limit: 10,
+  threshold: 0.7,
+  includeSnippet: true,
+  mode: 'semantic'
+});
+
+for (const result of results) {
+  console.log(`${result.filePath}:${result.startLine} - ${result.name} (${result.score.toFixed(2)})`);
+}
+```
+
+### listFiles()
+
+List all indexed files across all codebases.
+
+<ResponseField name="IndexedFile[]" type="IndexedFile[]">
+  Array of indexed files. See [Types](/api/types#indexedfile) for the IndexedFile structure.
+</ResponseField>
+
+#### Example
+
+```typescript
+const files = await index.listFiles();
+console.log(`Total indexed files: ${files.length}`);
+```
+
+### listCodebases()
+
+List all indexed codebases with metadata.
+
+<ResponseField name="Codebase[]" type="Codebase[]">
+  Array of codebases. See [Types](/api/types#codebase) for the Codebase structure.
+</ResponseField>
+
+#### Example
+
+```typescript
+const codebases = await index.listCodebases();
+for (const cb of codebases) {
+  console.log(`${cb.name}: ${cb.fileCount} files, ${cb.chunkCount} chunks`);
+}
+```
+
+### close()
+
+Close the database connection. Call this when you're done using the index.
+
+#### Example
+
+```typescript
+await index.close();
+```
+
+## Helper Functions
+
+### projectDbPath()
+
+Compute the default database path for a project directory: `<dir>/.codemogger/index.db`
+
+<ParamField path="dir" type="string" required>
+  Project directory path
+</ParamField>
+
+<ResponseField name="string" type="string">
+  Absolute path to the database file
+</ResponseField>
+
+#### Example
+
+```typescript
+import { projectDbPath } from 'codemogger';
+
+const dbPath = projectDbPath('./my-project');
+// Returns: /absolute/path/to/my-project/.codemogger/index.db
+```

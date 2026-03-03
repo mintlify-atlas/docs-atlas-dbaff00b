@@ -1,0 +1,519 @@
+---
+title: 'MCP Server'
+description: 'Set up Codemogger as an MCP server for AI coding agents'
+icon: 'server'
+---
+
+## Overview
+
+Codemogger implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) to expose code indexing and search as tools for AI coding agents like Claude Code, OpenCode, Cline, and others.
+
+The MCP server provides three tools:
+- **`codemogger_search`** - Search indexed code (semantic + keyword modes)
+- **`codemogger_index`** - Index a codebase for the first time
+- **`codemogger_reindex`** - Update the index after file changes
+
+## Quick Start
+
+<Steps>
+  <Step title="Install Codemogger">
+    ```bash
+    npm install -g codemogger
+    ```
+  </Step>
+
+  <Step title="Add to your MCP config">
+    Add Codemogger to your AI tool's MCP server configuration.
+
+    <CodeGroup>
+    ```json Claude Desktop
+    {
+      "mcpServers": {
+        "codemogger": {
+          "command": "npx",
+          "args": ["-y", "codemogger", "mcp"]
+        }
+      }
+    }
+    ```
+
+    ```json OpenCode
+    {
+      "mcpServers": {
+        "codemogger": {
+          "command": "npx",
+          "args": ["-y", "codemogger", "mcp"]
+        }
+      }
+    }
+    ```
+
+    ```json Cline
+    {
+      "mcpServers": {
+        "codemogger": {
+          "command": "npx",
+          "args": ["-y", "codemogger", "mcp"]
+        }
+      }
+    }
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Restart your AI tool">
+    Restart Claude Desktop, OpenCode, or your AI coding agent to load the MCP server.
+  </Step>
+
+  <Step title="Ask the agent to index your code">
+    ```
+    Please index the current codebase using codemogger
+    ```
+    
+    The agent will call `codemogger_index` with the appropriate directory path.
+  </Step>
+
+  <Step title="Search your code">
+    ```
+    Find the authentication middleware implementation
+    ```
+    
+    The agent will call `codemogger_search` with semantic mode.
+  </Step>
+</Steps>
+
+## MCP Tools Reference
+
+### `codemogger_search`
+
+Search an indexed codebase for relevant code.
+
+<ParamField path="query" type="string" required>
+  The search query - natural language for semantic mode, identifier/keyword for keyword mode
+</ParamField>
+
+<ParamField path="mode" type="string" default="semantic">
+  Search mode: `semantic` or `keyword`
+  
+  - **semantic**: Natural language queries like "how does authentication work?"
+  - **keyword**: Precise identifier lookup like "BTreeCursor" or "handleRequest"
+</ParamField>
+
+<ParamField path="limit" type="number" default="10">
+  Maximum number of results to return (1-50)
+</ParamField>
+
+<ParamField path="includeSnippet" type="boolean" default="true">
+  Include the full code snippet in results (can be large)
+</ParamField>
+
+#### Example Usage
+
+<Tabs>
+  <Tab title="Natural Language">
+    **User prompt:**
+    ```
+    How does the authentication system work?
+    ```
+
+    **Agent calls:**
+    ```json
+    {
+      "tool": "codemogger_search",
+      "params": {
+        "query": "authentication system implementation",
+        "mode": "semantic",
+        "limit": 10,
+        "includeSnippet": true
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Find Definition">
+    **User prompt:**
+    ```
+    Where is the BTreeCursor class defined?
+    ```
+
+    **Agent calls:**
+    ```json
+    {
+      "tool": "codemogger_search",
+      "params": {
+        "query": "BTreeCursor",
+        "mode": "keyword",
+        "limit": 5,
+        "includeSnippet": true
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+#### Response Format
+
+```
+1. /path/to/project/src/auth/middleware.ts:12-34  [function] authenticate
+   export async function authenticate(req: Request, res: Response)
+```typescript
+verifyToken(token: string): Promise&lt;User&gt; {
+  // token verification logic
+  const decoded = jwt.verify(token, SECRET_KEY)
+  return User.findById(decoded.userId)
+}
+```
+
+2. /path/to/project/src/auth/jwt.ts:8-15  [function] verifyToken
+   function verifyToken(token: string): Promise&lt;User&gt;
+```typescript
+function verifyToken(token: string): Promise<User> {
+  const decoded = jwt.verify(token, SECRET_KEY)
+  return User.findById(decoded.userId)
+}
+```
+```
+
+### `codemogger_index`
+
+Index a directory of source code for the first time.
+
+<ParamField path="directory" type="string" required>
+  Absolute path to the directory to index
+</ParamField>
+
+#### Example
+
+**User prompt:**
+```
+Index this codebase so we can search it
+```
+
+**Agent calls:**
+```json
+{
+  "tool": "codemogger_index",
+  "params": {
+    "directory": "/path/to/project"
+  }
+}
+```
+
+**Response:**
+```
+Indexed 248 files → 1,453 chunks
+Embedded: 1,453, Skipped: 0 unchanged, Removed: 0 stale
+Duration: 12,450ms
+```
+
+### `codemogger_reindex`
+
+Update the code index after modifying files. Only re-processes changed files.
+
+<ParamField path="directory" type="string" required>
+  Absolute path to the directory to reindex
+</ParamField>
+
+<Warning>
+**Important:** AI agents should call this tool at the end of every task that creates, modifies, or deletes source files. This keeps the search index fresh for future sessions.
+</Warning>
+
+#### Example
+
+**User prompt:**
+```
+I've made changes to the authentication code. Update the index.
+```
+
+**Agent calls:**
+```json
+{
+  "tool": "codemogger_reindex",
+  "params": {
+    "directory": "/path/to/project"
+  }
+}
+```
+
+**Response:**
+```
+Reindexed: 3 changed files, 245 unchanged
+Duration: 1,234ms
+```
+
+## Configuration
+
+### Custom Database Path
+
+By default, the MCP server auto-detects the database based on the current working directory. To specify a custom path:
+
+```json
+{
+  "mcpServers": {
+    "codemogger": {
+      "command": "npx",
+      "args": ["-y", "codemogger", "mcp", "--db", "/custom/path/index.db"]
+    }
+  }
+}
+```
+
+### Using Global Installation
+
+If you've installed Codemogger globally:
+
+```json
+{
+  "mcpServers": {
+    "codemogger": {
+      "command": "codemogger",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Server startup">
+    When your AI tool starts, it launches the Codemogger MCP server via stdio transport.
+  </Step>
+
+  <Step title="Tool registration">
+    The server registers three tools and queries the database to build dynamic descriptions.
+    
+    If a codebase is already indexed, the `codemogger_search` description includes:
+    ```
+    This project (/path/to/project) is indexed and searchable - 
+    1,453 chunks from 248 files.
+    ```
+  </Step>
+
+  <Step title="Agent decides when to use tools">
+    The AI agent analyzes your prompt and decides whether to:
+    - Search for code (`codemogger_search`)
+    - Index the codebase (`codemogger_index`)
+    - Update the index (`codemogger_reindex`)
+  </Step>
+
+  <Step title="Results are returned">
+    Search results include file paths, line numbers, function/class names, signatures, and optionally full source code.
+  </Step>
+</Steps>
+
+## Dynamic Description Updates
+
+The MCP server updates tool descriptions dynamically after indexing:
+
+```typescript
+// src/mcp.ts:120-122
+const current = findCurrentCodebase(codebases)
+searchTool.update({ description: buildSearchDescription(current) })
+server.sendToolListChanged()
+```
+
+This means after indexing, the agent sees updated context about what's searchable.
+
+## Integration Examples
+
+<Tabs>
+  <Tab title="Claude Code">
+    **Config location:** `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+    
+    ```json
+    {
+      "mcpServers": {
+        "codemogger": {
+          "command": "npx",
+          "args": ["-y", "codemogger", "mcp"]
+        }
+      }
+    }
+    ```
+    
+    **Usage:**
+    ```
+    User: Find where user authentication is handled
+    
+    Claude: I'll search the codebase for authentication code.
+    [calls codemogger_search with "user authentication"]
+    
+    Based on the search results, authentication is handled in:
+    1. src/auth/middleware.ts - authenticate() function
+    2. src/auth/jwt.ts - verifyToken() function
+    ...
+    ```
+  </Tab>
+
+  <Tab title="OpenCode">
+    **Config location:** Check OpenCode documentation for MCP config path
+    
+    ```json
+    {
+      "mcpServers": {
+        "codemogger": {
+          "command": "npx",
+          "args": ["-y", "codemogger", "mcp"]
+        }
+      }
+    }
+    ```
+    
+    OpenCode will automatically discover and use the Codemogger tools.
+  </Tab>
+
+  <Tab title="Cline">
+    Add to Cline's MCP configuration:
+    
+    ```json
+    {
+      "mcpServers": {
+        "codemogger": {
+          "command": "npx",
+          "args": ["-y", "codemogger", "mcp"]
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Index at the start of a session">
+    Encourage the agent to index or reindex at the beginning:
+    
+    ```
+    Before we start, please index this codebase so you can 
+    search it efficiently.
+    ```
+  </Accordion>
+
+  <Accordion title="Use semantic search for exploration">
+    When you don't know exact names:
+    
+    ```
+    How does error handling work in this codebase?
+    Find all database migration code
+    Show me the websocket implementation
+    ```
+  </Accordion>
+
+  <Accordion title="Use keyword search for precision">
+    When you know the identifier:
+    
+    ```
+    Where is the UserRepository class defined?
+    Find the handleRequest function
+    Show me all uses of BTreeCursor
+    ```
+  </Accordion>
+
+  <Accordion title="Reindex after making changes">
+    After the agent modifies code:
+    
+    ```
+    Now that you've updated the authentication code, 
+    please reindex so future searches include these changes.
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="MCP server not found">
+    Verify the MCP config syntax is correct and restart your AI tool.
+    
+    Test the server manually:
+    ```bash
+    npx codemogger mcp
+    ```
+    
+    It should start without errors (won't print anything - it's stdio-based).
+  </Accordion>
+
+  <Accordion title="No codebases indexed">
+    If the agent says "No codebases are indexed yet", ask it to index:
+    
+    ```
+    Please index the current directory
+    ```
+  </Accordion>
+
+  <Accordion title="Search returns no results">
+    Try a different search mode or broader query:
+    
+    ```
+    Search for "authentication" in keyword mode
+    ```
+  </Accordion>
+
+  <Accordion title="Database locked">
+    Only one process can write to the database at a time. If you're running `codemogger index` manually, stop it before the MCP server tries to index.
+  </Accordion>
+</AccordionGroup>
+
+## Source Code Reference
+
+The MCP server implementation is in `src/mcp.ts`. Key functions:
+
+- **`startMcpServer()`** - Entry point (src/mcp.ts:50)
+- **`buildSearchDescription()`** - Dynamic tool descriptions (src/mcp.ts:22)
+- **`findCurrentCodebase()`** - Detect current project (src/mcp.ts:15)
+
+## Advanced: Custom MCP Server
+
+You can build your own MCP server using Codemogger's SDK:
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
+import { CodeIndex, projectDbPath } from "codemogger"
+import { localEmbed, LOCAL_MODEL_NAME } from "codemogger/embed/local"
+import { z } from "zod"
+
+const server = new McpServer({ name: "my-code-search", version: "1.0.0" })
+const db = new CodeIndex({
+  dbPath: projectDbPath(process.cwd()),
+  embedder: localEmbed,
+  embeddingModel: LOCAL_MODEL_NAME
+})
+
+server.registerTool("code_search", {
+  title: "Search Code",
+  description: "Search indexed code",
+  inputSchema: {
+    query: z.string(),
+    limit: z.number().default(10)
+  }
+}, async ({ query, limit }) => {
+  const results = await db.search(query, { limit, mode: "hybrid" })
+  const text = results.map(r => 
+    `${r.filePath}:${r.startLine} - ${r.name}\n${r.snippet}`
+  ).join("\n\n")
+  return { content: [{ type: "text", text }] }
+})
+
+const transport = new StdioServerTransport()
+await server.connect(transport)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CLI Usage" icon="terminal" href="/guides/cli-usage">
+    Learn the command-line interface
+  </Card>
+  <Card title="SDK Usage" icon="code" href="/guides/sdk-usage">
+    Build custom integrations
+  </Card>
+  <Card title="Custom Embeddings" icon="brain" href="/guides/custom-embeddings">
+    Use different embedding models
+  </Card>
+  <Card title="Incremental Indexing" icon="rotate" href="/guides/incremental-indexing">
+    Understand how file changes are detected
+  </Card>
+</CardGroup>

@@ -1,0 +1,627 @@
+---
+title: 'Incremental Indexing'
+description: 'How Codemogger efficiently handles file changes and updates'
+icon: 'rotate'
+---
+
+## Overview
+
+Codemogger uses **incremental indexing** to avoid re-processing unchanged files. On subsequent indexing runs, only modified, added, or deleted files are processed - making updates extremely fast.
+
+This is critical for large codebases where full re-indexing would take minutes, but incremental updates complete in seconds.
+
+## How It Works
+
+<Steps>
+  <Step title="Scan directory">
+    Walk the directory tree and collect all source files, respecting `.gitignore`.
+    
+    ```typescript
+    // src/index.ts:89-91
+    const { files, errors } = await scanDirectory(rootDir, opts?.languages)
+    ```
+  </Step>
+
+  <Step title="Compute file hashes">
+    For each file, compute a SHA-256 hash of its content:
+    
+    ```typescript
+    // The scanner computes hashes during the scan phase
+    // Each file has: { absPath, content, hash, ... }
+    ```
+  </Step>
+
+  <Step title="Compare with stored hashes">
+    Look up each file's stored hash from the database:
+    
+    ```typescript
+    // src/index.ts:101-111
+    const filesToProcess: typeof files = []
+    for (const file of files) {
+      activeFiles.add(file.absPath)
+      const storedHash = await store.getFileHash(codebaseId, file.absPath)
+      if (storedHash === file.hash) {
+        skipped++  // File unchanged - skip it
+      } else {
+        filesToProcess.push(file)  // File changed or new - process it
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Process changed files only">
+    Only files with different hashes are chunked and embedded:
+    
+    ```typescript
+    // src/index.ts:137-179
+    for (const file of filesToProcess) {
+      const chunks = await chunkFile(file.absPath, file.content, ...)
+      await store.batchUpsertAllFileChunks(codebaseId, batchChunks)
+    }
+    ```
+  </Step>
+
+  <Step title="Remove stale files">
+    Files that were previously indexed but no longer exist are removed:
+    
+    ```typescript
+    // src/index.ts:210
+    const removed = await store.removeStaleFiles(codebaseId, activeFiles)
+    ```
+  </Step>
+
+  <Step title="Update search indices">
+    Rebuild the full-text search index (fast - only metadata, no embeddings):
+    
+    ```typescript
+    // src/index.ts:213-214
+    await store.rebuildFtsTable(codebaseId)
+    ```
+  </Step>
+</Steps>
+
+## Performance Comparison
+
+### First Run (Full Indexing)
+
+```bash
+codemogger index ./my-project --verbose
+```
+
+Output:
+```
+  scan: 234ms, chunk+embed: 11,892ms (1453 chunks), fts: 324ms
+Indexed 248 files → 1,453 chunks, embedded 1,453, skipped 0 unchanged, removed 0 stale (12,450ms)
+```
+
+**Breakdown:**
+- Scan: 234ms (2%)
+- Chunk + Embed: 11,892ms (95%)
+- FTS: 324ms (3%)
+
+### Subsequent Run (No Changes)
+
+```bash
+codemogger index ./my-project --verbose
+```
+
+Output:
+```
+  scan: 189ms, chunk+embed: 45ms (0 chunks), fts: 198ms
+Indexed 0 files → 0 chunks, embedded 0, skipped 248 unchanged, removed 0 stale (432ms)
+```
+
+**28x faster** - only scanning and FTS rebuild (no embedding).
+
+### Incremental Update (3 Files Changed)
+
+```bash
+# Edit 3 files
+codemogger index ./my-project --verbose
+```
+
+Output:
+```
+  scan: 198ms, chunk+embed: 891ms (18 chunks), fts: 215ms
+Indexed 3 files → 18 chunks, embedded 18, skipped 245 unchanged, removed 0 stale (1,304ms)
+```
+
+**9.5x faster** than full indexing - only re-embeds changed files.
+
+## Hash-Based Change Detection
+
+Codemogger uses **SHA-256 hashes** to detect file changes:
+
+```typescript
+// src/db/store.ts:115-121
+async getFileHash(codebaseId: number, filePath: string): Promise<string | null> {
+  const row = await this.db.prepare(
+    "SELECT file_hash FROM indexed_files WHERE codebase_id = ? AND file_path = ?"
+  ).get(codebaseId, filePath) as { file_hash: string } | undefined
+  return row?.file_hash ?? null
+}
+```
+
+**Why SHA-256?**
+- Extremely fast (Bun's crypto is optimized)
+- Cryptographically secure (no false positives)
+- Small storage footprint (64 hex chars)
+
+**Why not mtime?**
+- File timestamps can be unreliable (git checkout, build tools)
+- Doesn't detect content-preserving changes (formatting, comments)
+- Hash comparison is more reliable
+
+## Stale File Removal
+
+When files are deleted from the codebase, Codemogger removes their chunks:
+
+```typescript
+// src/db/store.ts:196-220
+async removeStaleFiles(codebaseId: number, activeFiles: Set<string>): Promise<number> {
+  const all = await this.db.prepare(
+    "SELECT file_path FROM indexed_files WHERE codebase_id = ?"
+  ).all(codebaseId) as { file_path: string }[]
+  
+  let removed = 0
+  for (const row of all) {
+    if (!activeFiles.has(row.file_path)) {
+      // File no longer exists - delete its chunks
+      await this.db.prepare(
+        "DELETE FROM chunks WHERE codebase_id = ? AND file_path = ?"
+      ).run(codebaseId, row.file_path)
+      removed++
+    }
+  }
+  return removed
+}
+```
+
+This ensures the index stays in sync with the filesystem.
+
+## Embedding Model Changes
+
+If you change the embedding model, Codemogger automatically re-embeds all chunks:
+
+```typescript
+// src/db/store.ts:243-260
+async getStaleEmbeddings(
+  codebaseId: number,
+  modelName: string,
+  limit?: number
+): Promise<...> {
+  const sql = `SELECT chunk_key, name, signature, file_path, kind, snippet 
+               FROM chunks
+               WHERE codebase_id = ? 
+               AND (embedding IS NULL OR embedding_model != ?)`
+  // Returns chunks that need (re-)embedding
+}
+```
+
+**Example:**
+
+```typescript
+// Initial indexing with model A
+const db1 = new CodeIndex({
+  dbPath: "./index.db",
+  embedder: embedderA,
+  embeddingModel: "all-MiniLM-L6-v2"
+})
+await db1.index("./project")  // Embeds 1,453 chunks
+await db1.close()
+
+// Later: switch to model B
+const db2 = new CodeIndex({
+  dbPath: "./index.db",  // Same database
+  embedder: embedderB,
+  embeddingModel: "text-embedding-3-small"  // Different model
+})
+await db2.index("./project")  // Re-embeds all 1,453 chunks
+await db2.close()
+```
+
+Output:
+```
+Indexed 0 files → 0 chunks, embedded 1,453, skipped 248 unchanged, removed 0 stale
+```
+
+**Why?**
+- File hashes match (skipped 248 files)
+- But embedding model changed → re-embed all chunks
+
+## Chunk-Level Tracking
+
+Each chunk stores its embedding model:
+
+```sql
+CREATE TABLE chunks (
+  id INTEGER PRIMARY KEY,
+  chunk_key TEXT UNIQUE,
+  file_hash TEXT,
+  embedding BLOB,
+  embedding_model TEXT,  -- e.g. "all-MiniLM-L6-v2"
+  ...
+)
+```
+
+This allows:
+1. **Model migration** - re-embed when model changes
+2. **Partial re-embedding** - only stale chunks
+3. **Model versioning** - track which model was used
+
+## Database Schema
+
+Key tables for incremental indexing:
+
+### `indexed_files`
+
+Tracks file metadata:
+
+```sql
+CREATE TABLE indexed_files (
+  codebase_id INTEGER,
+  file_path TEXT,
+  file_hash TEXT,      -- SHA-256 of content
+  chunk_count INTEGER,
+  indexed_at INTEGER,
+  PRIMARY KEY (codebase_id, file_path)
+)
+```
+
+### `chunks`
+
+Stores code chunks and embeddings:
+
+```sql
+CREATE TABLE chunks (
+  id INTEGER PRIMARY KEY,
+  codebase_id INTEGER,
+  file_path TEXT,
+  chunk_key TEXT UNIQUE,  -- <file_hash>:<start_line>:<end_line>
+  file_hash TEXT,         -- Ties chunk to file version
+  embedding BLOB,
+  embedding_model TEXT,
+  ...
+)
+```
+
+## Workflow Examples
+
+### Edit a File
+
+<Steps>
+  <Step title="User edits src/auth.ts">
+    File content changes, hash changes from `abc123...` to `def456...`
+  </Step>
+
+  <Step title="Run codemogger index">
+    ```bash
+    codemogger index .
+    ```
+  </Step>
+
+  <Step title="Codemogger detects the change">
+    ```typescript
+    storedHash = "abc123..."  // Old hash from database
+    currentHash = "def456..." // New hash from file
+    // Hashes differ → file changed → process it
+    ```
+  </Step>
+
+  <Step title="Delete old chunks">
+    ```typescript
+    // src/db/store.ts:134
+    await deleteStmt.run(codebaseId, filePath)
+    // Removes all chunks for src/auth.ts
+    ```
+  </Step>
+
+  <Step title="Create new chunks">
+    ```typescript
+    const chunks = await chunkFile(filePath, content, newHash, ...)
+    // Parse with tree-sitter, extract functions/classes
+    ```
+  </Step>
+
+  <Step title="Store new chunks">
+    ```typescript
+    await store.batchUpsertAllFileChunks(codebaseId, [{
+      filePath: "src/auth.ts",
+      fileHash: "def456...",
+      chunks: [...]
+    }])
+    ```
+  </Step>
+
+  <Step title="Embed new chunks">
+    ```typescript
+    const stale = await store.getStaleEmbeddings(codebaseId, modelName, 1000)
+    const vectors = await embedder(stale.map(buildEmbedText))
+    await store.batchUpsertEmbeddings(...)
+    ```
+  </Step>
+</Steps>
+
+### Delete a File
+
+<Steps>
+  <Step title="User deletes src/unused.ts">
+    File no longer exists in the filesystem.
+  </Step>
+
+  <Step title="Run codemogger index">
+    ```bash
+    codemogger index .
+    ```
+  </Step>
+
+  <Step title="Scan builds activeFiles set">
+    ```typescript
+    const activeFiles = new Set<string>()
+    for (const file of files) {
+      activeFiles.add(file.absPath)  // src/unused.ts not in this set
+    }
+    ```
+  </Step>
+
+  <Step title="Remove stale files">
+    ```typescript
+    const removed = await store.removeStaleFiles(codebaseId, activeFiles)
+    // Deletes chunks and file record for src/unused.ts
+    // removed = 1
+    ```
+  </Step>
+</Steps>
+
+### Add a New File
+
+<Steps>
+  <Step title="User creates src/new-feature.ts">
+    New file not in database.
+  </Step>
+
+  <Step title="Run codemogger index">
+    ```bash
+    codemogger index .
+    ```
+  </Step>
+
+  <Step title="Hash lookup returns null">
+    ```typescript
+    const storedHash = await store.getFileHash(codebaseId, "src/new-feature.ts")
+    // storedHash = null (file not in database)
+    // null !== currentHash → process it
+    ```
+  </Step>
+
+  <Step title="Process as new file">
+    Chunk, embed, and store like any other changed file.
+  </Step>
+</Steps>
+
+## Performance Optimization
+
+### Batched Processing
+
+Codemogger processes files in batches to balance throughput and memory:
+
+```typescript
+// src/index.ts:133-145
+const FILE_BATCH = 200  // Process 200 files at a time
+const EMBED_BATCH = 64  // Embed 64 chunks at a time
+
+for (let batchStart = 0; batchStart < filesToProcess.length; batchStart += FILE_BATCH) {
+  const batchFiles = filesToProcess.slice(batchStart, batchStart + FILE_BATCH)
+  
+  // Chunk this batch
+  const batchChunks = []
+  for (const file of batchFiles) {
+    const chunks = await chunkFile(...)
+    batchChunks.push({ filePath, fileHash, chunks })
+  }
+  
+  // Write to database in one transaction
+  await store.batchUpsertAllFileChunks(codebaseId, batchChunks)
+}
+```
+
+### Parallel Embedding
+
+Embedding is done in batches of 64 for optimal throughput:
+
+```typescript
+// src/index.ts:182-205
+while (true) {
+  const stale = await store.getStaleEmbeddings(codebaseId, modelName, 1000)
+  if (stale.length === 0) break
+  
+  for (let i = 0; i < stale.length; i += EMBED_BATCH) {
+    const slice = stale.slice(i, i + EMBED_BATCH)
+    const texts = slice.map(buildEmbedText)
+    const vectors = await this.embedder(texts)  // 64 at a time
+    await store.batchUpsertEmbeddings(...)
+  }
+}
+```
+
+**Why 64?**
+- Small enough to avoid OOM
+- Large enough to amortize API call overhead
+- Works well with local models and APIs
+
+### Transaction Batching
+
+Database writes use transactions for atomicity:
+
+```typescript
+// src/db/store.ts:130-187
+async batchUpsertAllFileChunks(...) {
+  await this.db.exec("BEGIN")
+  try {
+    // Delete old chunks
+    // Insert new chunks
+    // Update file metadata
+    await this.db.exec("COMMIT")
+  } catch (e) {
+    await this.db.exec("ROLLBACK")
+    throw e
+  }
+}
+```
+
+This ensures:
+- **Atomicity** - all-or-nothing updates
+- **Performance** - batched writes are faster than individual commits
+- **Consistency** - no partial updates on errors
+
+## Monitoring Progress
+
+The `IndexResult` shows what happened:
+
+```typescript
+interface IndexResult {
+  files: number       // Files processed (changed + new)
+  chunks: number      // Chunks created
+  embedded: number    // Chunks embedded
+  skipped: number     // Files unchanged (hash match)
+  removed: number     // Files deleted from codebase
+  errors: string[]    // Any errors encountered
+  duration: number    // Total time in milliseconds
+}
+```
+
+**Interpretation:**
+
+```bash
+Indexed 3 files → 18 chunks, embedded 18, skipped 245 unchanged, removed 1 stale (1,304ms)
+```
+
+- **3 files** changed or added
+- **18 chunks** created from those 3 files
+- **18 chunks** embedded (new chunks always need embedding)
+- **245 files** skipped (unchanged)
+- **1 file** removed (deleted from codebase)
+- **1,304ms** total time
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Re-index frequently">
+    Incremental indexing is fast - run it often:
+    
+    ```bash
+    # After making changes
+    codemogger index .
+    ```
+    
+    Or integrate into your workflow:
+    ```bash
+    # In package.json
+    "scripts": {
+      "reindex": "codemogger index .",
+      "postinstall": "npm run reindex"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use --verbose for diagnostics">
+    See exactly what's happening:
+    
+    ```bash
+    codemogger index . --verbose
+    ```
+    
+    Shows phase timing:
+    ```
+    scan: 198ms, chunk+embed: 891ms (18 chunks), fts: 215ms
+    ```
+  </Accordion>
+
+  <Accordion title="Don't delete .codemogger/">
+    The `.codemogger/` directory contains your index:
+    
+    ```
+    my-project/
+    ├── .codemogger/
+    │   └── index.db  ← Don't delete this!
+    ├── src/
+    └── ...
+    ```
+    
+    Add to `.gitignore` (it's rebuilt on each machine):
+    ```gitignore
+    .codemogger/
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Files not being re-indexed after changes">
+    Check that file content actually changed (not just mtime):
+    
+    ```bash
+    # Before
+    sha256sum src/auth.ts
+    
+    # Edit file
+    
+    # After
+    sha256sum src/auth.ts  # Should differ
+    ```
+  </Accordion>
+
+  <Accordion title="Incremental indexing seems slow">
+    If many files changed, embedding dominates:
+    
+    ```bash
+    # Check how many files are being processed
+    codemogger index . --verbose
+    # If "embedded" is high, that's expected
+    ```
+    
+    Embedding is the bottleneck (~97% of time).
+  </Accordion>
+
+  <Accordion title="Database file growing too large">
+    Check if old embeddings are being cleaned up:
+    
+    ```bash
+    # List indexed files
+    codemogger list
+    
+    # If you see deleted files, they should be removed on next index
+    codemogger index .
+    ```
+    
+    The database uses `vector8` (int8 quantization) for storage efficiency.
+  </Accordion>
+</AccordionGroup>
+
+## Source Code References
+
+Key implementations:
+
+- **Hash comparison**: src/index.ts:101-111
+- **Batch processing**: src/index.ts:137-179
+- **Stale file removal**: src/db/store.ts:196-220
+- **Embedding staleness**: src/db/store.ts:243-260
+- **Chunk upsert**: src/db/store.ts:126-187
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="SDK Usage" icon="code" href="/guides/sdk-usage">
+    Learn the full CodeIndex API
+  </Card>
+  <Card title="Custom Embeddings" icon="brain" href="/guides/custom-embeddings">
+    Use different embedding models
+  </Card>
+  <Card title="CLI Usage" icon="terminal" href="/guides/cli-usage">
+    Use the command-line interface
+  </Card>
+  <Card title="MCP Server" icon="server" href="/guides/mcp-server">
+    Integrate with AI coding agents
+  </Card>
+</CardGroup>

@@ -1,0 +1,156 @@
+---
+title: Introduction
+description: 'Code indexing library with tree-sitter chunking and vector+FTS search for AI coding agents'
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.svg"
+  alt="Codemogger Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.svg"
+  alt="Codemogger Hero Dark"
+/>
+
+## What is Codemogger?
+
+Codemogger is a code indexing library for AI coding agents. It parses source code with tree-sitter, chunks it into semantic units (functions, structs, classes, impl blocks), embeds them locally, and stores everything in a single SQLite file with vector + full-text search.
+
+**No Docker, no server, no API keys.** One `.db` file per codebase.
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get up and running in under 5 minutes
+  </Card>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Install with npm, yarn, pnpm, or bun
+  </Card>
+  <Card
+    title="SDK Reference"
+    icon="code"
+    href="/api/code-index"
+  >
+    Use as a library in your TypeScript projects
+  </Card>
+  <Card
+    title="CLI Reference"
+    icon="terminal"
+    href="/api/cli-index"
+  >
+    Command-line interface for indexing and search
+  </Card>
+</CardGroup>
+
+## Why Codemogger?
+
+Coding agents need to understand codebases. They need to find where things are defined, discover how concepts are implemented across files, and navigate unfamiliar code quickly. This requires both:
+
+- **Keyword search** - precise identifier lookup
+- **Semantic search** - natural language queries when you don't know the exact names
+
+As AI coding tools become more composable - agents calling agents, MCP servers plugging into different hosts - this capability needs to exist as a library that runs locally. No external servers, no API keys, no Docker containers. Just a function call that returns results.
+
+<Note>
+  Codemogger uses embedded SQLite (via [Turso](https://turso.tech)) with FTS + vector search in a single `.db` file.
+</Note>
+
+## Key Features
+
+<CardGroup cols={3}>
+  <Card title="Tree-sitter AST-aware chunking" icon="tree">
+    Extracts semantic units like functions, classes, and structs
+  </Card>
+  <Card title="Local vector embeddings" icon="microchip">
+    No API keys required - runs entirely on your machine
+  </Card>
+  <Card title="Hybrid search" icon="magnifying-glass">
+    Combines semantic and keyword search with reciprocal rank fusion
+  </Card>
+  <Card title="Single SQLite file" icon="database">
+    One `.db` file per codebase - no server required
+  </Card>
+  <Card title="MCP server" icon="plug">
+    Works with Claude Code, OpenCode, and other AI coding agents
+  </Card>
+  <Card title="Multi-language support" icon="globe">
+    Rust, C, C++, Go, Python, Zig, Java, Scala, JavaScript, TypeScript, PHP, Ruby
+  </Card>
+</CardGroup>
+
+## How It Works
+
+<Steps>
+  <Step title="Scan">
+    Walk directory, respect `.gitignore`, detect language from extension
+  </Step>
+  <Step title="Chunk">
+    Parse each file with tree-sitter (WASM), extract top-level definitions (functions, structs, classes, impl blocks). Items >150 lines are split into sub-items.
+  </Step>
+  <Step title="Embed">
+    Encode each chunk with the provided embedding model (runs locally, no API)
+  </Step>
+  <Step title="Store">
+    Write chunks + embeddings to SQLite with FTS index
+  </Step>
+  <Step title="Search">
+    Vector cosine similarity (semantic) or FTS with weighted fields (keyword)
+  </Step>
+</Steps>
+
+<Note>
+  **Incremental indexing**: Only changed files (by SHA-256 hash) are re-processed on subsequent runs.
+</Note>
+
+## Performance
+
+Keyword search is **25x-370x faster than ripgrep** and returns precise definitions instead of thousands of file matches.
+
+Benchmarked on real-world codebases on an Apple M2 (8GB):
+
+| Project | Language | Files | Semantic | Keyword | ripgrep |
+|---------|----------|------:|---------:|--------:|--------:|
+| [Turso](https://github.com/tursodatabase/turso) | Rust | 748 | 35 ms | 1 ms | 25 ms |
+| [Bun](https://github.com/oven-sh/bun) | Zig | 9,255 | 137 ms | 2 ms | 166 ms |
+| [TypeScript](https://github.com/microsoft/TypeScript) | TypeScript | 39,298 | 242 ms | 4 ms | 1,500 ms |
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | 16,668 | 617 ms | 12 ms | 731 ms |
+
+<Warning>
+  The real advantage isn't just speed - it's **finding the right code when you don't know the exact keywords**. Semantic search understands natural language queries like "authentication middleware" or "SQL statement parsing and compilation" and returns the most relevant definitions.
+</Warning>
+
+## Architecture
+
+- **Bun/TypeScript** runtime
+- **tree-sitter (WASM)** for AST-aware chunking - 13 language grammars
+- **all-MiniLM-L6-v2** for local embeddings (384 dimensions, q8 quantized)
+- **Turso** for storage - embedded SQLite with FTS + vector search extensions
+- **Single DB file** stores multiple codebases with per-codebase FTS tables and global vector search
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start Guide"
+    icon="play"
+    href="/quickstart"
+  >
+    Index your first codebase in 2 minutes
+  </Card>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Choose your package manager
+  </Card>
+</CardGroup>

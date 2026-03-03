@@ -1,0 +1,169 @@
+---
+title: "codemogger_index"
+description: "Index a directory of source code for semantic and keyword search"
+---
+
+## Overview
+
+The `codemogger_index` tool indexes a directory of source code, making it searchable via [`codemogger_search`](/api/mcp-search). It performs AST-aware chunking using tree-sitter, computes vector embeddings, and stores everything in a local SQLite database.
+
+Indexing is **incremental**: only changed files are re-processed, making subsequent indexing operations fast.
+
+## Tool Name
+
+```
+codemogger_index
+```
+
+## Input Schema
+
+<ParamField path="directory" type="string" required>
+  Absolute path to the directory to index. This should be the root of your codebase (e.g., `/home/user/projects/my-app`).
+</ParamField>
+
+## Supported Languages
+
+Codemogger supports the following languages:
+
+- Rust
+- C / C++
+- Go
+- Python
+- Zig
+- Java
+- Scala
+- JavaScript
+- TypeScript / TSX
+- PHP
+- Ruby
+
+## Response Format
+
+<ResponseField name="content" type="array">
+  Array containing a single text object with indexing statistics.
+  
+  <ResponseField name="type" type="string">
+    Always `"text"`
+  </ResponseField>
+  
+  <ResponseField name="text" type="string">
+    Multi-line summary with the following information:
+    - Number of files indexed and chunks created
+    - Number of chunks embedded (new or changed)
+    - Number of chunks skipped (unchanged)
+    - Number of chunks removed (stale/deleted)
+    - Duration in milliseconds
+    - Any errors encountered (if applicable)
+  </ResponseField>
+</ResponseField>
+
+### Example Response
+
+```
+Indexed 1247 files → 8934 chunks
+Embedded: 8934, Skipped: 0 unchanged, Removed: 0 stale
+Duration: 45230ms
+```
+
+### Example Response (Incremental)
+
+```
+Indexed 5 files → 43 chunks
+Embedded: 43, Skipped: 8891 unchanged, Removed: 0 stale
+Duration: 2140ms
+```
+
+### Example Response (With Errors)
+
+```
+Indexed 1000 files → 7200 chunks
+Embedded: 7150, Skipped: 0 unchanged, Removed: 50 stale
+Duration: 38500ms
+Errors: Parse error in src/broken.ts, Unsupported file type: config.yaml
+```
+
+## Usage Examples
+
+### Initial Indexing
+
+**Scenario**: AI agent needs to index a codebase for the first time.
+
+```json
+{
+  "directory": "/home/user/projects/my-backend"
+}
+```
+
+**Response**:
+```
+Indexed 342 files → 2891 chunks
+Embedded: 2891, Skipped: 0 unchanged, Removed: 0 stale
+Duration: 18450ms
+```
+
+**What happens**:
+1. Scans the directory recursively for supported source files
+2. Parses each file with tree-sitter to extract functions, classes, types, etc.
+3. Chunks code intelligently based on AST structure
+4. Computes vector embeddings for each chunk using a local model
+5. Stores chunks, embeddings, and metadata in SQLite
+
+### Incremental Indexing
+
+**Scenario**: AI agent has indexed before and wants to update after file changes.
+
+```json
+{
+  "directory": "/home/user/projects/my-backend"
+}
+```
+
+**Response**:
+```
+Indexed 8 files → 67 chunks
+Embedded: 67, Skipped: 2824 unchanged, Removed: 0 stale
+Duration: 3200ms
+```
+
+**What happens**:
+1. Checks file modification times against the database
+2. Only re-processes files that have changed
+3. Updates embeddings for modified chunks
+4. Removes chunks from deleted files
+5. Much faster than initial indexing
+
+## Best Practices for AI Agents
+
+1. **Index once per codebase**: The first indexing operation can take time (seconds to minutes depending on codebase size). Subsequent updates are much faster.
+
+2. **Index before searching**: Always run `codemogger_index` before using `codemogger_search` if you're working with a new codebase.
+
+3. **Use absolute paths**: Always provide the full absolute path to the directory, not a relative path.
+
+4. **Index the project root**: Index the top-level directory of the project, not subdirectories, to ensure full coverage.
+
+5. **Handle errors gracefully**: If the response includes errors, check if they're critical (e.g., permission issues) or minor (e.g., unsupported file types).
+
+6. **Re-index after making changes**: Use [`codemogger_reindex`](/api/mcp-reindex) at the end of tasks that modify source files to keep the index fresh.
+
+## Performance Characteristics
+
+- **Initial indexing**: Typically 10-100ms per file, depending on file size and complexity
+- **Incremental indexing**: Only processes changed files, often 10-100x faster
+- **Database**: Stored in SQLite at `~/.config/codemogger/index.db` (or custom path)
+- **Embeddings**: Computed locally using a lightweight model (no API calls)
+
+## When to Use This Tool
+
+- First time working with a new codebase
+- Setting up code search capabilities for an AI agent
+- After cloning a repository that hasn't been indexed yet
+- When switching to a different project that needs indexing
+
+## Next Steps
+
+After indexing, use [`codemogger_search`](/api/mcp-search) to search the indexed codebase:
+- Semantic search for conceptual queries
+- Keyword search for finding specific definitions
+
+For subsequent updates after modifying files, use [`codemogger_reindex`](/api/mcp-reindex).

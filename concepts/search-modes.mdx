@@ -1,0 +1,353 @@
+---
+title: 'Search Modes'
+description: 'Semantic, keyword, and hybrid search explained'
+icon: 'magnifying-glass'
+---
+
+## Overview
+
+Codemogger supports three search modes, each optimized for different use cases:
+
+<CardGroup cols={3}>
+  <Card title="Semantic" icon="brain">
+    Natural language queries using vector similarity
+  </Card>
+  <Card title="Keyword" icon="text">
+    Precise identifier lookup using full-text search
+  </Card>
+  <Card title="Hybrid" icon="merge">
+    Combined approach using reciprocal rank fusion
+  </Card>
+</CardGroup>
+
+---
+
+## Semantic Search
+
+**Best for:** Natural language queries, conceptual searches, "what does this codebase do?"
+
+### How It Works
+
+1. **Encode the query** into a vector using the same embedding model used during indexing
+2. **Vector search** in SQLite using cosine similarity
+3. **Return top-k** most similar chunks
+
+**Implementation:** `src/index.ts:254`
+
+```typescript
+if (mode === "semantic") {
+  const [queryVec] = (await this.embedder([query])) as [number[]];
+  const results = await store.vectorSearch(queryVec, limit, includeSnippet);
+  return threshold > 0
+    ? results.filter((r) => r.score >= threshold)
+    : results;
+}
+```
+
+### Query Examples
+
+**Good semantic queries:**
+- "authentication middleware"
+- "write-ahead log replication and synchronization"
+- "HTTP request parsing and response writing"
+- "scheduling pods to nodes based on resource requirements"
+- "container health check probes and restart policy"
+
+These queries describe **what you're looking for** without knowing exact function names.
+
+### Performance
+
+Benchmarked on real-world codebases (Apple M2, p50 over 3 runs):
+
+| Project | Language | Files | Semantic Search Time |
+|---------|----------|------:|-----------------------:|
+| **Turso** | Rust | 748 | 35 ms |
+| **Bun** | Zig | 9,255 | 137 ms |
+| **TypeScript** | TypeScript | 39,298 | 242 ms |
+| **Kubernetes** | Go | 16,668 | 617 ms |
+
+<Info>
+Semantic search is **global** — it searches across all chunks from all codebases in the database.
+</Info>
+
+### Why Semantic Search?
+
+Traditional keyword search (grep, ripgrep) fails when you don't know exact terms:
+
+**Query:** "write-ahead log replication and synchronization" (Turso)
+
+| Codemogger (semantic) | ripgrep |
+|---|---|
+| `impl LogicalLog` - core/mvcc/persistent_storage/logical_log.rs | 3 files matched |
+| `enum CommitState` - core/mvcc/database/mod.rs | (keyword: "write-ahead") |
+| `function new` - core/mvcc/database/checkpoint_state_machine.rs | |
+| `struct LogicalLog` - core/mvcc/persistent_storage/logical_log.rs | |
+| `function checkpoint_shutdown` - core/storage/pager.rs | |
+
+ripgrep returns 3 files. Codemogger returns 5 **specific definitions** ranked by relevance.
+
+---
+
+## Keyword Search
+
+**Best for:** Precise identifier lookup, "find the definition of `BTreeCursor`"
+
+### How It Works
+
+1. **Preprocess query** to extract discriminative keywords
+2. **FTS search** using SQLite's FTS5 with BM25 ranking
+3. **Return top-k** highest-scoring chunks
+
+**Implementation:** `src/index.ts:262`
+
+```typescript
+const processed = preprocessQuery(query, "keywords");
+if (!processed.trim()) return [];
+
+const ftsResults = await store.ftsSearch(processed, limit, includeSnippet);
+
+if (mode === "keyword") {
+  return threshold > 0
+    ? ftsResults.filter((r) => r.score >= threshold)
+    : ftsResults;
+}
+```
+
+### Query Preprocessing
+
+Raw user queries are poor FTS queries — they contain stopwords and filler. Codemogger extracts discriminative terms.
+
+**Implementation:** `src/search/query.ts:48`
+
+```typescript
+const STOPWORDS = new Set([
+  "a", "about", "above", "after", "again", ...
+  // Agent-specific filler
+  "help", "please", "can", "could", "file", "files",
+  "code", "use", "using", "make", "way", "thing",
+]);
+
+function extractKeywords(prompt: string): string {
+  const lower = prompt.toLowerCase();
+  const tokens = lower.match(/[a-z0-9]+(?:[-_.][a-z0-9]+)*/g) ?? [];
+
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const token of tokens) {
+    if (token.length < 3 || token.length > 30) continue;
+    if (STOPWORDS.has(token)) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    result.push(token);
+    if (result.length >= 12) break;
+  }
+
+  return result.join(" ");
+}
+```
+
+**Example:**
+- Input: `"Can you help me find the BTreeCursor class?"`
+- Output: `"btreecursor class"`
+
+### FTS Field Weights
+
+Chunks are indexed with weighted fields:
+
+- **name** (weight: 10) — `BTreeCursor`, `authenticate`, `vectorSearch`
+- **kind** (weight: 5) — `function`, `struct`, `class`, `impl`
+- **signature** (weight: 3) — first line of definition
+- **snippet** (weight: 1) — full code content
+
+Matches in `name` rank 10x higher than matches in `snippet`.
+
+### Performance
+
+| Project | Keyword Search Time | ripgrep |
+|---------|--------------------:|--------:|
+| **Turso** | 1 ms | 25 ms |
+| **Bun** | 2 ms | 166 ms |
+| **TypeScript** | 4 ms | 1,500 ms |
+| **Kubernetes** | 12 ms | 731 ms |
+
+Keyword search is **25x-370x faster than ripgrep** and returns precise definitions instead of thousands of file matches.
+
+<Tip>
+Keyword search is **per-codebase** — each codebase has its own FTS table for better BM25 relevance.
+</Tip>
+
+---
+
+## Hybrid Search
+
+**Best for:** General-purpose search, unknown query types, agent workflows
+
+### How It Works
+
+Combine keyword and semantic search using **Reciprocal Rank Fusion (RRF)**:
+
+1. **Run both** keyword (FTS) and semantic (vector) search
+2. **Merge results** using RRF scoring
+3. **Return top-k** combined results
+
+**Implementation:** `src/index.ts:274`
+
+```typescript
+if (mode === "hybrid") {
+  // Keyword path
+  const processed = preprocessQuery(query, "keywords");
+  const ftsResults = await store.ftsSearch(processed, limit, includeSnippet);
+
+  // Semantic path
+  const [queryVec] = (await this.embedder([query])) as [number[]];
+  const vecResults = await store.vectorSearch(queryVec, limit, includeSnippet);
+
+  // Merge via RRF
+  const merged = rrfMerge(ftsResults, vecResults, limit);
+  return threshold > 0 ? merged.filter((r) => r.score >= threshold) : merged;
+}
+```
+
+### Reciprocal Rank Fusion (RRF)
+
+RRF combines two ranked lists without needing to normalize scores (BM25 vs cosine similarity).
+
+**Formula:**
+```
+score(chunk) = w_fts / (k + rank_fts) + w_vec / (k + rank_vec)
+```
+
+- `k = 60` (standard constant)
+- `w_fts = 0.4` (keyword weight)
+- `w_vec = 0.6` (semantic weight)
+
+**Implementation:** `src/search/rank.ts:16`
+
+```typescript
+export function rrfMerge(
+  ftsResults: SearchResult[],
+  vecResults: SearchResult[],
+  limit: number,
+  k = 60,
+  ftsWeight = 0.4,
+  vecWeight = 0.6,
+): SearchResult[] {
+  const scores = new Map<string, number>();
+  const data = new Map<string, SearchResult>();
+
+  for (let i = 0; i < ftsResults.length; i++) {
+    const r = ftsResults[i]!;
+    scores.set(r.chunkKey, (scores.get(r.chunkKey) ?? 0) + ftsWeight / (k + i + 1));
+    data.set(r.chunkKey, r);
+  }
+
+  for (let i = 0; i < vecResults.length; i++) {
+    const r = vecResults[i]!;
+    scores.set(r.chunkKey, (scores.get(r.chunkKey) ?? 0) + vecWeight / (k + i + 1));
+    if (!data.has(r.chunkKey)) {
+      data.set(r.chunkKey, r);
+    }
+  }
+
+  return Array.from(scores.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([key, score]) => {
+      const row = data.get(key)!;
+      return { ...row, score };
+    });
+}
+```
+
+**Why RRF?**
+- Chunks ranking high in **both** systems get the best scores
+- No need to normalize BM25 scores vs cosine distances
+- Simple, effective, and well-studied in information retrieval
+
+**Why 60/40 weights?**
+- Semantic search handles conceptual queries better
+- Keyword search still helps with exact identifier matches
+- 60/40 split balances the two
+
+<Note>
+You can customize weights by forking the library and adjusting `ftsWeight` and `vecWeight` in `src/search/rank.ts`.
+</Note>
+
+---
+
+## Choosing a Search Mode
+
+| Use Case | Recommended Mode |
+|----------|------------------|
+| **Natural language queries** | Semantic |
+| **"Find the definition of X"** | Keyword |
+| **Agent workflows (unknown query type)** | Hybrid |
+| **Exact identifier lookup** | Keyword |
+| **Conceptual exploration** | Semantic |
+| **General-purpose CLI search** | Hybrid |
+
+<Tip>
+The CLI and MCP server default to **semantic** mode. The SDK defaults to **semantic** but allows you to specify any mode.
+</Tip>
+
+---
+
+## SDK Examples
+
+### Semantic Search
+
+```typescript
+const results = await db.search(
+  "authentication middleware",
+  { mode: "semantic", limit: 10 }
+);
+```
+
+### Keyword Search
+
+```typescript
+const results = await db.search(
+  "BTreeCursor",
+  { mode: "keyword", limit: 5 }
+);
+```
+
+### Hybrid Search
+
+```typescript
+const results = await db.search(
+  "find the user authentication code",
+  { mode: "hybrid", limit: 10, threshold: 0.1 }
+);
+```
+
+### Search Options
+
+```typescript
+interface SearchOptions {
+  limit?: number;          // Max results (default: 5)
+  threshold?: number;      // Min score (default: 0.0)
+  includeSnippet?: boolean; // Return full code snippet (default: false)
+  mode?: SearchMode;       // "semantic" | "keyword" | "hybrid" (default: "semantic")
+}
+```
+
+---
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Embeddings" icon="cube" href="/concepts/embeddings">
+    Learn how semantic search works under the hood
+  </Card>
+  <Card title="How It Works" icon="gear" href="/concepts/how-it-works">
+    See the full 5-phase indexing pipeline
+  </Card>
+  <Card title="SDK Reference" icon="code" href="/api/code-index">
+    CodeIndex.search() API documentation
+  </Card>
+  <Card title="MCP Tools" icon="plug" href="/api/mcp-search">
+    Using search modes in MCP servers
+  </Card>
+</CardGroup>

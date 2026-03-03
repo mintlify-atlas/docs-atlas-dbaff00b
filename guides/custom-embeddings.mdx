@@ -1,0 +1,545 @@
+---
+title: 'Custom Embedding Models'
+description: 'Use different embedding models or API providers with Codemogger'
+icon: 'brain'
+---
+
+## Overview
+
+Codemogger's SDK is **model-agnostic**. You provide an `Embedder` function that takes text and returns vectors - Codemogger handles the rest.
+
+This means you can use:
+- Local models (Hugging Face Transformers, ONNX, llama.cpp)
+- API providers (OpenAI, Cohere, Voyage AI)
+- Custom models (fine-tuned on your codebase)
+- Any embedding dimension (Codemogger stores vectors as-is)
+
+## The Embedder Interface
+
+```typescript
+type Embedder = (texts: string[]) => Promise<number[][]>
+```
+
+An `Embedder` is a function that:
+1. Takes an array of strings (batched for efficiency)
+2. Returns a promise that resolves to an array of vectors (one per input text)
+3. Each vector is a `number[]` of any dimension
+
+<Info>
+Codemogger calls your embedder with batches of up to 64 texts at a time during indexing.
+</Info>
+
+## Local Models
+
+### Hugging Face Transformers.js (Default)
+
+The CLI and MCP server use this by default:
+
+```typescript
+import { pipeline } from "@huggingface/transformers"
+import type { Embedder } from "codemogger"
+
+const extractor = await pipeline(
+  "feature-extraction",
+  "Xenova/all-MiniLM-L6-v2",
+  { dtype: "q8" }  // 8-bit quantization for smaller model size
+)
+
+const embedder: Embedder = async (texts) => {
+  const output = await extractor(texts, {
+    pooling: "mean",
+    normalize: true
+  })
+  return output.tolist() as number[][]
+}
+```
+
+**Pros:**
+- Runs locally, no API keys
+- Fast (~22MB model, 384 dimensions)
+- Works offline
+
+**Cons:**
+- Lower quality than larger models
+- CPU-only (no GPU acceleration in browsers/Bun)
+
+### Other Hugging Face Models
+
+You can use any compatible model from Hugging Face:
+
+<CodeGroup>
+```typescript all-mpnet-base-v2 (768 dims)
+import { pipeline } from "@huggingface/transformers"
+
+const extractor = await pipeline(
+  "feature-extraction",
+  "Xenova/all-mpnet-base-v2",
+  { dtype: "q8" }
+)
+
+const embedder = async (texts: string[]) => {
+  const output = await extractor(texts, {
+    pooling: "mean",
+    normalize: true
+  })
+  return output.tolist() as number[][]
+}
+
+// Higher quality, larger dimension, slower
+```
+
+```typescript bge-small-en-v1.5 (384 dims)
+import { pipeline } from "@huggingface/transformers"
+
+const extractor = await pipeline(
+  "feature-extraction",
+  "Xenova/bge-small-en-v1.5",
+  { dtype: "q8" }
+)
+
+const embedder = async (texts: string[]) => {
+  const output = await extractor(texts, {
+    pooling: "mean",
+    normalize: true
+  })
+  return output.tolist() as number[][]
+}
+
+// Good balance of speed and quality
+```
+</CodeGroup>
+
+<Warning>
+Make sure to update the `embeddingModel` parameter to match your model name. Codemogger uses this to track which chunks need re-embedding if you change models.
+</Warning>
+
+### ONNX Runtime
+
+For production deployments, use ONNX for faster inference:
+
+```typescript
+import { pipeline } from "@huggingface/transformers"
+import type { Embedder } from "codemogger"
+
+// Use ONNX backend instead of default
+const extractor = await pipeline(
+  "feature-extraction",
+  "Xenova/all-MiniLM-L6-v2",
+  {
+    dtype: "q8",
+    device: "cpu",
+    // ONNX runtime is used automatically for supported models
+  }
+)
+
+const embedder: Embedder = async (texts) => {
+  const output = await extractor(texts, {
+    pooling: "mean",
+    normalize: true
+  })
+  return output.tolist() as number[][]
+}
+```
+
+## API Providers
+
+### OpenAI Embeddings
+
+```typescript
+import OpenAI from "openai"
+import type { Embedder } from "codemogger"
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+})
+
+const embedder: Embedder = async (texts) => {
+  const response = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: texts,
+    encoding_format: "float"
+  })
+  
+  return response.data.map(item => item.embedding)
+}
+
+// Use with CodeIndex
+import { CodeIndex } from "codemogger"
+
+const db = new CodeIndex({
+  dbPath: "./index.db",
+  embedder,
+  embeddingModel: "text-embedding-3-small"  // 1536 dimensions
+})
+```
+
+**Pros:**
+- High quality embeddings
+- Supports large dimensions (1536 for small, 3072 for large)
+
+**Cons:**
+- Requires API key and internet connection
+- Costs money (though very cheap - ~$0.02 per 1M tokens)
+- Slower than local models due to network latency
+
+### Cohere Embeddings
+
+```typescript
+import { CohereClient } from "cohere-ai"
+import type { Embedder } from "codemogger"
+
+const cohere = new CohereClient({
+  token: process.env.COHERE_API_KEY
+})
+
+const embedder: Embedder = async (texts) => {
+  const response = await cohere.embed({
+    texts,
+    model: "embed-english-v3.0",
+    inputType: "search_document"  // for indexing
+  })
+  
+  return response.embeddings
+}
+
+// For search queries, use inputType: "search_query"
+const searchEmbedder: Embedder = async (texts) => {
+  const response = await cohere.embed({
+    texts,
+    model: "embed-english-v3.0",
+    inputType: "search_query"
+  })
+  return response.embeddings
+}
+```
+
+<Tip>
+Cohere's embeddings are optimized for search with separate `search_document` and `search_query` modes. You may need to use different embedders for indexing vs. searching.
+</Tip>
+
+### Voyage AI
+
+```typescript
+import { VoyageAIClient } from "voyageai"
+import type { Embedder } from "codemogger"
+
+const voyage = new VoyageAIClient({
+  apiKey: process.env.VOYAGE_API_KEY
+})
+
+const embedder: Embedder = async (texts) => {
+  const response = await voyage.embed({
+    input: texts,
+    model: "voyage-code-2",  // Optimized for code
+    inputType: "document"
+  })
+  
+  return response.data.map(item => item.embedding)
+}
+```
+
+**Voyage Code-2** is specifically trained on code and may provide better results than general-purpose models.
+
+## Batching for API Providers
+
+API providers often have batch size limits. Wrap your embedder to handle large batches:
+
+```typescript
+import type { Embedder } from "codemogger"
+import OpenAI from "openai"
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+
+const MAX_BATCH_SIZE = 100  // OpenAI's limit
+
+const embedder: Embedder = async (texts) => {
+  const results: number[][] = []
+  
+  // Process in chunks
+  for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
+    const batch = texts.slice(i, i + MAX_BATCH_SIZE)
+    
+    const response = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: batch,
+      encoding_format: "float"
+    })
+    
+    results.push(...response.data.map(item => item.embedding))
+  }
+  
+  return results
+}
+```
+
+## Custom Models
+
+### Fine-tuned Models
+
+If you've fine-tuned an embedding model on your codebase:
+
+```typescript
+import { pipeline } from "@huggingface/transformers"
+import type { Embedder } from "codemogger"
+
+const extractor = await pipeline(
+  "feature-extraction",
+  "my-org/my-finetuned-code-embedder",  // Your model on HF Hub
+  { dtype: "q8" }
+)
+
+const embedder: Embedder = async (texts) => {
+  const output = await extractor(texts, {
+    pooling: "mean",
+    normalize: true
+  })
+  return output.tolist() as number[][]
+}
+```
+
+### Local Model Files
+
+Load models from disk:
+
+```typescript
+import { pipeline } from "@huggingface/transformers"
+import type { Embedder } from "codemogger"
+
+const extractor = await pipeline(
+  "feature-extraction",
+  "/path/to/local/model",
+  { local_files_only: true }
+)
+
+const embedder: Embedder = async (texts) => {
+  const output = await extractor(texts, {
+    pooling: "mean",
+    normalize: true
+  })
+  return output.tolist() as number[][]
+}
+```
+
+## Dimension Considerations
+
+### Vector8 Storage
+
+Codemogger uses `vector8` (int8 quantization) by default for storage efficiency:
+
+- **384 dimensions** (all-MiniLM-L6-v2): ~395 bytes per chunk
+- **768 dimensions** (all-mpnet-base-v2): ~790 bytes per chunk
+- **1536 dimensions** (OpenAI small): ~1,580 bytes per chunk
+
+Compare to float32:
+- **384 dimensions**: ~1,536 bytes per chunk (4x larger)
+
+<Info>
+Quantization happens automatically in the database layer. You provide float32 vectors, Codemogger stores them as int8.
+</Info>
+
+### Higher Dimensions ≠ Better Results
+
+For code search:
+- **384-768 dims** is usually sufficient
+- **1536+ dims** may overfit on large codebases
+- Local models are often better than you'd expect
+
+<Tip>
+Benchmark on your codebase before switching to expensive API models. The default `all-MiniLM-L6-v2` performs well for most use cases.
+</Tip>
+
+## Changing Models
+
+When you change embedding models, Codemogger automatically re-embeds all chunks:
+
+```typescript
+import { CodeIndex } from "codemogger"
+
+// Initial indexing with model A
+const dbA = new CodeIndex({
+  dbPath: "./index.db",
+  embedder: embedderA,
+  embeddingModel: "all-MiniLM-L6-v2"
+})
+await dbA.index("/path/to/project")
+await dbA.close()
+
+// Later: switch to model B
+const dbB = new CodeIndex({
+  dbPath: "./index.db",  // Same database
+  embedder: embedderB,
+  embeddingModel: "text-embedding-3-small"  // Different model
+})
+
+// This will re-embed all chunks with the new model
+await dbB.index("/path/to/project")
+await dbB.close()
+```
+
+The database stores the model name alongside each embedding:
+
+```typescript
+// src/db/store.ts:243-250
+async getStaleEmbeddings(codebaseId: number, modelName: string, limit?: number) {
+  const sql = `SELECT chunk_key, name, signature, file_path, kind, snippet 
+               FROM chunks
+               WHERE codebase_id = ? 
+               AND (embedding IS NULL OR embedding_model != ?)`
+  // Returns chunks that need re-embedding
+}
+```
+
+## Complete Example: Switching Providers
+
+```typescript
+import { CodeIndex, projectDbPath } from "codemogger"
+import { pipeline } from "@huggingface/transformers"
+import OpenAI from "openai"
+
+// Start with local model
+const localExtractor = await pipeline(
+  "feature-extraction",
+  "Xenova/all-MiniLM-L6-v2",
+  { dtype: "q8" }
+)
+
+const localEmbedder = async (texts: string[]) => {
+  const output = await localExtractor(texts, {
+    pooling: "mean",
+    normalize: true
+  })
+  return output.tolist() as number[][]
+}
+
+const db1 = new CodeIndex({
+  dbPath: projectDbPath("./my-project"),
+  embedder: localEmbedder,
+  embeddingModel: "all-MiniLM-L6-v2"
+})
+
+await db1.index("./my-project")
+await db1.close()
+
+// Later: upgrade to OpenAI for better quality
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+
+const openaiEmbedder = async (texts: string[]) => {
+  const response = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: texts
+  })
+  return response.data.map(item => item.embedding)
+}
+
+const db2 = new CodeIndex({
+  dbPath: projectDbPath("./my-project"),
+  embedder: openaiEmbedder,
+  embeddingModel: "text-embedding-3-small"
+})
+
+// Re-embeds all chunks with OpenAI
+await db2.index("./my-project")
+
+const results = await db2.search("authentication middleware")
+console.log(results)
+
+await db2.close()
+```
+
+## Performance Tips
+
+<AccordionGroup>
+  <Accordion title="Batch size matters">
+    Larger batches = fewer API calls but more memory:
+    
+    ```typescript
+    // Codemogger uses batches of 64 internally (src/index.ts:134)
+    const EMBED_BATCH = 64
+    
+    for (let i = 0; i < stale.length; i += EMBED_BATCH) {
+      const slice = stale.slice(i, i + EMBED_BATCH)
+      const texts = slice.map(buildEmbedText)
+      const vectors = await this.embedder(texts)
+      await store.batchUpsertEmbeddings(...)
+    }
+    ```
+    
+    You can't change this directly, but it's optimized for balance.
+  </Accordion>
+
+  <Accordion title="Cache model initialization">
+    Don't reload the model on every call:
+    
+    ```typescript
+    // Bad: reloads model each time
+    const embedder = async (texts: string[]) => {
+      const extractor = await pipeline(...)  // ❌ slow
+      return ...
+    }
+    
+    // Good: load once
+    const extractor = await pipeline(...)
+    const embedder = async (texts: string[]) => {
+      const output = await extractor(texts)  // ✅ fast
+      return output.tolist()
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Local models for development, API for production">
+    Use local models during development for speed, then upgrade to API models for better quality in production:
+    
+    ```typescript
+    const embedder = process.env.NODE_ENV === "production"
+      ? openaiEmbedder
+      : localEmbedder
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Model download fails">
+    Hugging Face models download to `~/.cache/huggingface/`. If downloads fail:
+    
+    1. Check internet connection
+    2. Verify model name exists on Hugging Face
+    3. Try `local_files_only: true` if model is already cached
+  </Accordion>
+
+  <Accordion title="API rate limits">
+    If you hit rate limits during indexing:
+    
+    1. Add delays between batches
+    2. Reduce batch size
+    3. Use a local model for initial indexing, then switch to API for searches
+  </Accordion>
+
+  <Accordion title="Vector dimension mismatch">
+    If you change models with different dimensions, Codemogger will re-embed all chunks. This is expected and automatic.
+    
+    To verify:
+    ```typescript
+    const codebases = await db.listCodebases()
+    console.log(codebases[0].chunkCount)  // Should match before and after
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="SDK Usage" icon="code" href="/guides/sdk-usage">
+    Learn the full CodeIndex API
+  </Card>
+  <Card title="Incremental Indexing" icon="rotate" href="/guides/incremental-indexing">
+    Understand how file changes are detected
+  </Card>
+  <Card title="CLI Usage" icon="terminal" href="/guides/cli-usage">
+    Use the command-line interface
+  </Card>
+  <Card title="MCP Server" icon="server" href="/guides/mcp-server">
+    Integrate with AI coding agents
+  </Card>
+</CardGroup>

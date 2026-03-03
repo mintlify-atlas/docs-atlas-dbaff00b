@@ -1,0 +1,186 @@
+---
+title: "codemogger_search"
+description: "Search an indexed codebase using semantic or keyword mode"
+---
+
+## Overview
+
+The `codemogger_search` tool allows AI coding agents to search through indexed codebases efficiently. It supports two search modes:
+
+- **Semantic mode**: Natural language queries using vector embeddings (e.g., "how does authentication work?")
+- **Keyword mode**: Precise identifier lookup using full-text search (e.g., "BTreeCursor", "handleRequest")
+
+This tool should be used **first** when exploring or navigating a codebase, before falling back to grep or glob operations.
+
+## Tool Name
+
+```
+codemogger_search
+```
+
+## Input Schema
+
+<ParamField path="query" type="string" required>
+  The search query. Use natural language for semantic mode ("how is user authentication handled?") or specific identifiers for keyword mode ("AuthService", "login").
+</ParamField>
+
+<ParamField path="mode" type="enum" default="semantic">
+  Search mode to use:
+  - `semantic`: For conceptual queries and exploring how features work
+  - `keyword`: For exact identifier lookup (functions, classes, types, variables)
+</ParamField>
+
+<ParamField path="limit" type="number" default={10}>
+  Maximum number of results to return. Must be between 1 and 50.
+</ParamField>
+
+<ParamField path="includeSnippet" type="boolean" default={true}>
+  Whether to include the full source code snippet in results. When true, eliminates the need for a separate file read operation.
+</ParamField>
+
+## Response Format
+
+<ResponseField name="content" type="array">
+  Array containing a single text object with formatted search results.
+  
+  <ResponseField name="type" type="string">
+    Always `"text"`
+  </ResponseField>
+  
+  <ResponseField name="text" type="string">
+    Formatted search results. Each result includes:
+    - File path and line range (e.g., `src/auth.ts:42-58`)
+    - Code element kind (function, class, type, etc.)
+    - Element name and signature
+    - Full code snippet (if `includeSnippet` is true)
+  </ResponseField>
+</ResponseField>
+
+### No Results Response
+
+If no codebases are indexed:
+```
+No codebases are indexed yet. Use codemogger_index to index the codebase directory first, then retry this search. Indexing is a one-time operation.
+```
+
+If no matches are found:
+```
+No results found for "<query>" (mode: <mode>). Indexed codebases: <list of indexed paths>
+```
+
+## Usage Examples
+
+### Semantic Search (Finding Functionality)
+
+**Scenario**: AI agent needs to understand how authentication works in the codebase.
+
+```json
+{
+  "query": "how does user authentication work?",
+  "mode": "semantic",
+  "limit": 10,
+  "includeSnippet": true
+}
+```
+
+**Response**:
+```
+1. src/auth/middleware.ts:15-32  [function] authenticateUser
+   async function authenticateUser(req: Request): Promise<User | null>
+```typescript
+function authenticateUser(req: Request): Promise&lt;User | null&gt; {
+  const token = req.headers.get('Authorization')?.split(' ')[1]
+  if (!token) return null
+  return verifyToken(token)
+}
+```
+
+2. src/auth/jwt.ts:8-24  [function] verifyToken
+   function verifyToken(token: string): Promise&lt;User | null&gt;
+```typescript
+function verifyToken(token: string): Promise<User | null> {
+  // JWT verification logic
+}
+```
+```
+
+### Keyword Search (Finding Definitions)
+
+**Scenario**: AI agent needs to find where the `BTreeCursor` class is defined.
+
+```json
+{
+  "query": "BTreeCursor",
+  "mode": "keyword",
+  "limit": 5,
+  "includeSnippet": true
+}
+```
+
+**Response**:
+```
+1. src/db/btree.ts:145-203  [class] BTreeCursor
+   class BTreeCursor implements Iterator&lt;[string, any]&gt;
+```typescript
+class BTreeCursor implements Iterator<[string, any]> {
+  private current: BTreeNode | null
+  private stack: BTreeNode[] = []
+  
+  constructor(root: BTreeNode) {
+    this.current = root
+  }
+  
+  next(): IteratorResult<[string, any]> {
+    // cursor implementation
+  }
+}
+```
+```
+
+### Search Without Snippets (Performance Optimization)
+
+**Scenario**: AI agent wants to quickly scan for all functions related to "error handling" without loading full code.
+
+```json
+{
+  "query": "error handling",
+  "mode": "semantic",
+  "limit": 20,
+  "includeSnippet": false
+}
+```
+
+**Response**:
+```
+1. src/errors/handler.ts:10-25  [function] handleError
+   function handleError(error: Error, context: Context): void
+
+2. src/middleware/errors.ts:5-18  [function] errorMiddleware
+   function errorMiddleware(err: Error, req: Request, res: Response): void
+
+3. src/utils/retry.ts:32-48  [function] withRetry
+   async function withRetry<T>(fn: () => Promise<T>, maxRetries: number): Promise<T>
+```
+
+## Best Practices for AI Agents
+
+1. **Use semantic mode for exploration**: When you don't know exact names or want to understand how a feature is implemented across multiple files.
+
+2. **Use keyword mode for precision**: When you need to find the definition of a specific function, class, or type.
+
+3. **Set `includeSnippet: true` to avoid extra reads**: This provides the full source code immediately, eliminating the need for separate file read operations.
+
+4. **Start with this tool before grep/glob**: The code index is AST-aware and provides better context than simple text search.
+
+5. **Adjust limit based on task**: Use lower limits (5-10) for targeted searches, higher limits (20-50) when gathering broad context.
+
+## When to Use This Tool
+
+- Finding where a function, class, type, or variable is defined (keyword mode)
+- Understanding how a feature or concept is implemented across many files (semantic mode)
+- Discovering relevant code when you don't know exact filenames or identifiers (semantic mode)
+- Getting quick overviews of code structure without reading entire files
+
+## Prerequisites
+
+The codebase must be indexed first using [`codemogger_index`](/api/mcp-index). If the search returns a "no codebases indexed" message, run the index tool before retrying the search.

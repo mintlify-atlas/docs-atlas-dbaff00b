@@ -1,0 +1,89 @@
+---
+title: SearchOptions
+description: Configuration options for search operations
+---
+
+## Interface
+
+```typescript
+export interface SearchOptions {
+  limit?: number;
+  threshold?: number;
+  includeSnippet?: boolean;
+  mode?: SearchMode;
+}
+```
+
+## Properties
+
+<ParamField path="limit" type="number" default="5">
+  Maximum number of search results to return.
+  
+  Controls how many code chunks are returned from the search. Higher values return more results but may include less relevant matches.
+</ParamField>
+
+<ParamField path="threshold" type="number" default="0.0">
+  Minimum similarity score threshold (0.0 to 1.0).
+  
+  Results with a score below this threshold are filtered out. A higher threshold returns only more confident matches:
+  - `0.0` - No filtering (return all results up to limit)
+  - `0.5` - Moderate confidence
+  - `0.7` - High confidence
+  - `0.9` - Very high confidence
+</ParamField>
+
+<ParamField path="includeSnippet" type="boolean" default="false">
+  Whether to include code snippets in search results.
+  
+  When `true`, each result includes the full code snippet for the matched chunk. When `false`, only metadata (file path, name, signature, etc.) is returned, which is faster and uses less memory.
+</ParamField>
+
+<ParamField path="mode" type="SearchMode" default="semantic">
+  Search mode to use: `"semantic"`, `"keyword"`, or `"hybrid"`.
+  
+  - **`"semantic"`** - Natural language/conceptual queries using vector similarity search. Best for finding code by description or intent (e.g., "authentication logic", "error handling").
+  
+  - **`"keyword"`** - Precise identifier or term lookup using full-text search (FTS). Best for finding specific function names, class names, or exact terms (e.g., "handleRequest", "UserController").
+  
+  - **`"hybrid"`** - Combines both semantic and keyword search using reciprocal rank fusion (RRF). Best for queries that may benefit from both approaches.
+</ParamField>
+
+## Examples
+
+### Semantic Search with High Confidence
+
+```typescript
+const results = await index.search('database connection pooling', {
+  limit: 10,
+  threshold: 0.7,
+  includeSnippet: true,
+  mode: 'semantic'
+});
+```
+
+### Keyword Search for Specific Identifiers
+
+```typescript
+const results = await index.search('AuthService login', {
+  limit: 5,
+  mode: 'keyword'
+});
+```
+
+### Hybrid Search with Snippets
+
+```typescript
+const results = await index.search('error handling middleware', {
+  limit: 15,
+  threshold: 0.5,
+  includeSnippet: true,
+  mode: 'hybrid'
+});
+```
+
+### Minimal Search (Defaults)
+
+```typescript
+// Uses: limit=5, threshold=0.0, includeSnippet=false, mode='semantic'
+const results = await index.search('user authentication');
+```

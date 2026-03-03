@@ -1,0 +1,276 @@
+---
+title: 'codemogger search'
+description: 'Search indexed code semantically using natural language'
+---
+
+## Usage
+
+```bash
+codemogger search <query> [options]
+```
+
+Search your indexed codebase using natural language queries or keywords. Returns the most relevant code chunks with similarity scores.
+
+## Arguments
+
+<ParamField path="query" type="string" required>
+  Natural language query or search terms.
+  
+  Examples:
+  - "authentication logic"
+  - "error handling for API requests"
+  - "function that validates user input"
+  - "database connection code"
+</ParamField>
+
+## Options
+
+<ParamField path="--db" type="string">
+  Database file path.
+  
+  **Default:** `<project>/.codemogger/index.db` (automatically determined from current directory)
+  
+  Specify a custom database location if you're not in the indexed project directory or using a non-default database path.
+</ParamField>
+
+<ParamField path="--limit" type="number">
+  Maximum number of results to return.
+  
+  **Default:** `5`
+  
+  Controls how many matching code chunks are returned. Increase for more comprehensive results, decrease for faster searches.
+</ParamField>
+
+<ParamField path="--threshold" type="number">
+  Minimum similarity score to include in results (0-1 scale).
+  
+  **Default:** `0`
+  
+  Filter out low-relevance results. Higher values (e.g., 0.7) return only highly relevant matches. Lower values (e.g., 0.3) cast a wider net.
+</ParamField>
+
+<ParamField path="--format" type="string">
+  Output format.
+  
+  **Default:** `json`
+  
+  **Options:**
+  - `json` - Structured JSON output (ideal for scripting/parsing)
+  - `text` - Human-readable text output (ideal for terminal use)
+</ParamField>
+
+<ParamField path="--snippet" type="boolean">
+  Include code snippet in output.
+  
+  **Default:** `false`
+  
+  When enabled, includes the actual code content in the results. Omit to only get file paths and metadata.
+</ParamField>
+
+<ParamField path="--mode" type="string">
+  Search mode to use.
+  
+  **Default:** `semantic`
+  
+  **Options:**
+  - `semantic` - Vector similarity search using embeddings (best for natural language)
+  - `keyword` - Full-text search using keywords (best for exact terms)
+  - `hybrid` - Combines semantic and keyword search (best of both worlds)
+</ParamField>
+
+## Examples
+
+### Basic semantic search
+
+Find authentication-related code:
+
+```bash
+codemogger search "authentication logic"
+```
+
+```json
+{
+  "query": "authentication logic",
+  "results": [
+    {
+      "filePath": "src/auth/login.ts",
+      "chunkIndex": 2,
+      "score": 0.87,
+      "type": "function",
+      "name": "authenticateUser"
+    },
+    {
+      "filePath": "src/auth/middleware.ts",
+      "chunkIndex": 0,
+      "score": 0.82,
+      "type": "function",
+      "name": "verifyToken"
+    }
+  ],
+  "elapsed": 42
+}
+```
+
+### Search with snippets
+
+Get the actual code in results:
+
+```bash
+codemogger search "error handling" --snippet
+```
+
+```json
+{
+  "query": "error handling",
+  "results": [
+    {
+      "filePath": "src/utils/errors.ts",
+      "chunkIndex": 0,
+      "score": 0.91,
+      "type": "function",
+      "name": "handleApiError",
+      "snippet": "export function handleApiError(error: Error) {\n  if (error instanceof ApiError) {\n    return error.toResponse();\n  }\n  return new Response('Internal error', { status: 500 });\n}"
+    }
+  ],
+  "elapsed": 38
+}
+```
+
+### Text format output
+
+Human-readable output for terminal use:
+
+```bash
+codemogger search "database connection" --format text
+```
+
+```
+Query: database connection
+Found 3 results (52ms):
+
+1. src/db/connection.ts:15 (score: 0.89)
+   function: connectToDatabase
+
+2. src/db/pool.ts:8 (score: 0.84)
+   function: createConnectionPool
+
+3. src/config/database.ts:3 (score: 0.78)
+   variable: dbConfig
+```
+
+### Limit results
+
+Get top 10 results instead of default 5:
+
+```bash
+codemogger search "API endpoints" --limit 10
+```
+
+Get only the single best match:
+
+```bash
+codemogger search "user validation" --limit 1
+```
+
+### Filter by threshold
+
+Only return highly relevant results (score >= 0.7):
+
+```bash
+codemogger search "parsing logic" --threshold 0.7
+```
+
+### Keyword search mode
+
+Use exact keyword matching instead of semantic search:
+
+```bash
+codemogger search "getUserById" --mode keyword
+```
+
+This is useful for finding specific function names, class names, or exact code patterns.
+
+### Hybrid search mode
+
+Combine semantic and keyword search:
+
+```bash
+codemogger search "fetch user data" --mode hybrid
+```
+
+Hybrid mode provides the best of both worlds - it understands natural language while also matching exact keywords.
+
+### Custom database location
+
+Search a database that's not in the default location:
+
+```bash
+codemogger search "validation" --db /custom/path/index.db
+```
+
+### Combined options
+
+Comprehensive search with all options:
+
+```bash
+codemogger search "error recovery logic" \
+  --limit 10 \
+  --threshold 0.6 \
+  --format text \
+  --snippet \
+  --mode hybrid
+```
+
+## Output Format
+
+### JSON Format
+
+Structured output with:
+- `query`: The search query
+- `results`: Array of matching chunks
+  - `filePath`: Path to the file containing the chunk
+  - `chunkIndex`: Index of the chunk within the file
+  - `score`: Similarity score (0-1, higher is better)
+  - `type`: Type of code element (function, class, etc.)
+  - `name`: Name of the code element
+  - `snippet`: Code content (if `--snippet` flag used)
+- `elapsed`: Query execution time in milliseconds
+
+### Text Format
+
+Human-readable output showing:
+- Query and result count with timing
+- Numbered list of results
+- File path and line number
+- Similarity score
+- Code element type and name
+
+## Search Modes
+
+### Semantic Mode (Default)
+
+Uses vector embeddings to find semantically similar code:
+- Best for natural language queries
+- Understands intent, not just keywords
+- Example: "code that validates emails" will find email validation logic even if those exact words aren't in the code
+
+### Keyword Mode
+
+Traditional full-text search:
+- Best for exact terms and identifiers
+- Fast and precise
+- Example: "authenticateUser" finds exact function name matches
+
+### Hybrid Mode
+
+Combines both approaches:
+- Best for comprehensive results
+- Balances semantic understanding with keyword precision
+- Example: "JWT authentication" leverages both semantic meaning and exact acronym
+
+## Notes
+
+- Search only works after you've run `codemogger index` on a directory
+- The database must exist at the specified (or default) path
+- All search happens locally - no data leaves your machine
+- Search is fast even on large codebases (typically less than 100ms)
