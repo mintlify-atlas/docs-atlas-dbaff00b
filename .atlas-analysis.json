@@ -1,0 +1,118 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Codemogger",
+  "projectDescription": "Code indexing library with tree-sitter chunking and vector+FTS search for AI coding agents",
+  "theme": "aspen",
+  "primaryColor": "#7C3AED",
+  "lightColor": "#A78BFA",
+  "darkColor": "#5B21B6",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/how-it-works",
+              "concepts/chunking",
+              "concepts/search-modes",
+              "concepts/embeddings"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/sdk-usage",
+              "guides/cli-usage",
+              "guides/mcp-server",
+              "guides/custom-embeddings",
+              "guides/incremental-indexing"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/architecture",
+              "advanced/performance",
+              "advanced/benchmarks",
+              "advanced/supported-languages"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "SDK",
+            "pages": [
+              "api/code-index",
+              "api/search-options",
+              "api/index-options",
+              "api/types"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "api/cli-index",
+              "api/cli-search",
+              "api/cli-list"
+            ]
+          },
+          {
+            "group": "MCP Tools",
+            "pages": [
+              "api/mcp-search",
+              "api/mcp-index",
+              "api/mcp-reindex"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Tree-sitter AST-aware code chunking",
+    "Local vector embeddings with no API keys",
+    "Hybrid semantic and keyword search",
+    "Single SQLite file per codebase",
+    "MCP server for AI coding agents",
+    "Incremental indexing for fast updates",
+    "Support for 13 programming languages",
+    "CLI and SDK interfaces"
+  ],
+  "publicApiSurface": [
+    "CodeIndex",
+    "CodeIndex.index()",
+    "CodeIndex.search()",
+    "CodeIndex.listFiles()",
+    "CodeIndex.listCodebases()",
+    "CodeIndex.close()",
+    "projectDbPath()",
+    "SearchResult",
+    "IndexedFile",
+    "Codebase",
+    "CodeChunk",
+    "Embedder",
+    "SearchOptions",
+    "IndexOptions",
+    "SearchMode",
+    "codemogger index",
+    "codemogger search",
+    "codemogger list",
+    "codemogger mcp",
+    "codemogger_search",
+    "codemogger_index",
+    "codemogger_reindex"
+  ]
+}
